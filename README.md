@@ -45,6 +45,10 @@
 
 	var fdty_src="//ke.wang/fdty/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
+想让 AI 答题库外的新题？把 Key 拼进加载地址（`?key=`）即可，一次粘贴搞定：
+
+	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+
 
 ### 5. 检查试卷、补充数据库中没有的题目的答案、交卷
 ![show](screenshots/3.png?2017-5-22)
@@ -82,3 +86,17 @@
 （原始题库、转换题库成以上格式时用到的正则表达式也请记录一下哦）
 
 然后运行```node generate.js```就行了，谢谢。
+
+# AI 自动答题（可选，DeepSeek）
+
+题库里没有的题，可以让 AI 帮您答。**完全可选**：不带 Key 运行就和以前一样，不会启用 AI，也不会弹窗。
+
+想用的话，把 Key 拼进第 4 步的加载地址（`?key=sk-你的KEY`）即可，脚本会自动记住，下次不用再带。Key 到 [platform.deepseek.com](https://platform.deepseek.com) 免费获取，**只保存在您自己的浏览器里，不会上传**。
+
+（可选）想换模型、调思考强度、开联网搜索，在控制台执行一次：
+
+	localStorage.setItem('fdty_deepseek_model', 'deepseek-v4-flash')
+	localStorage.setItem('fdty_deepseek_effort', 'low')
+	localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
+
+失配题会连选项一起发给 AI，答完自动勾选，控制台会打印 `AI自动作答`。
