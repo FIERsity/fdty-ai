@@ -48,7 +48,7 @@
 
 	var fdty_src="//ke.wang/fdty/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
-想让 AI 答题库外的新题？把 Key 拼进加载地址（`?key=`）即可，一次粘贴搞定：
+想让 AI 答题库外的新题？把 Deepseek的APIKey 拼进加载地址（`?key=`）即可，一次粘贴搞定：
 
 	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
