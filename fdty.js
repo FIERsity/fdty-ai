@@ -170,10 +170,12 @@
 
 
     // ==================== DeepSeek AI 自动答题（可选功能） ====================
-    // 启用方式：首次运行时在弹窗输入 DeepSeek API Key（https://platform.deepseek.com 获取），
-    // 或提前在控制台执行 localStorage.setItem('fdty_deepseek_key', 'sk-xxx')。
+    // 完全可选：不带 Key 运行就与原版一致，不触发 AI、不打扰；带 Key 才启用。
+    // 启用方式（任选其一）：
+    //   1) 把 Key 拼进加载地址：fdty.js?key=sk-xxx（推荐，自动保存，下次无需再带）
+    //   2) 控制台执行 localStorage.setItem('fdty_deepseek_key', 'sk-xxx')
     // Key 仅保存在本机浏览器 localStorage，不会上传到任何地方。
-    // 可选配置：
+    // 可选配置（控制台执行一次）：
     //   localStorage.setItem('fdty_deepseek_model', 'deepseek-chat')  指定模型（默认自动探测，优先 deepseek-v4-flash）
     //   localStorage.setItem('fdty_deepseek_effort', 'low')           思考强度 low/medium/high（默认 low，high 会过度思考导致超时）
     //   localStorage.setItem('fdty_tavily_key', 'tvly-xxx')           配置 Tavily 联网搜索（https://tavily.com 免费）
@@ -191,20 +193,26 @@
     }
 
     // 探测可用的 DeepSeek 模型（兼容 deepseek-chat / deepseek-v4-pro / deepseek-v4-flash / deepseek-reasoner）
+    // 结果缓存到 localStorage，避免每次运行都请求 /models
     function detectDeepSeekModel(apiKey, callback) {
         try {
             var configured = localStorage.getItem('fdty_deepseek_model');
             if (configured) { callback(configured); return; }
         } catch (e) {}
+        var cached = null;
+        try { cached = localStorage.getItem('fdty_detected_model'); } catch (e) {}
+        if (cached) { callback(cached); return; }
         fetch(DEEPSEEK_MODELS_URL, {
             headers: { 'Authorization': 'Bearer ' + apiKey }
         }).then(function (res) { return res.json(); }).then(function (data) {
             var ids = ((data && data.data) || []).map(function (m) { return m.id; });
             var priority = ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-pro', 'deepseek-reasoner'];
+            var chosen = ids[0] || 'deepseek-chat';
             for (var i = 0; i < priority.length; i++) {
-                if (ids.indexOf(priority[i]) >= 0) { callback(priority[i]); return; }
+                if (ids.indexOf(priority[i]) >= 0) { chosen = priority[i]; break; }
             }
-            callback(ids[0] || 'deepseek-chat');
+            try { localStorage.setItem('fdty_detected_model', chosen); } catch (e) {}
+            callback(chosen);
         }).catch(function () { callback('deepseek-chat'); });
     }
 
@@ -224,11 +232,15 @@
     }
 
     // 解析 AI 返回的答案文本 -> [{index, answer}]（index 为 0-based 题目序号）
+    // 先把“序号.答案”用换行拆开（兼容挤在一行），再逐行提取，容忍行尾收尾词（如“完成”“谢谢”）
     function parseDeepSeekAnswers(content, questionCount) {
         var results = [];
-        var lines = String(content || '').split(/\r?\n/);
+        var text = String(content || '').replace(/(\d+)\s*[.、:：)\]](?=\s*[正确错误对错ABCD])/g, '\n$&');
+        var lines = text.split(/\r?\n/);
         for (var i = 0; i < lines.length; i++) {
-            var m = lines[i].trim().match(/^\s*(\d+)\s*[.、:：)\]][\s\S]*?(正确|错误|对|错|[ABCD])\s*$/i);
+            var line = lines[i].trim();
+            if (!line) continue;
+            var m = line.match(/^(\d+)\s*[.、:：)\]][\s\S]*?(正确|错误|对|错|[ABCD])\s*$/i);
             if (!m) continue;
             var idx = parseInt(m[1], 10);
             if (idx < 1 || idx > questionCount) continue;
@@ -330,10 +342,12 @@
 
     function solveWithDeepSeek(questions) {
         if (!questions.length) return;
+        // 未配置 Key：完全静默返回，不打印任何 AI 相关日志（与原始脚本行为一致，不打扰）
+        if (!getStoredKey('fdty_deepseek_key')) return;
         console.info('题库未收录 ' + questions.length + ' 题，正在调用 DeepSeek AI 解答…');
         askDeepSeek(questions, function (answers) {
             if (!answers.length) {
-                console.warn('DeepSeek 未能给出答案（未配置 Key 或调用失败），请手动作答这几题。');
+                console.warn('DeepSeek 未能给出答案（调用失败），请手动作答这几题。');
                 return;
             }
             var applied = applyDeepSeekAnswers(answers, questions);
