@@ -82,3 +82,41 @@
 （原始题库、转换题库成以上格式时用到的正则表达式也请记录一下哦）
 
 然后运行```node generate.js```就行了，谢谢。
+
+# AI 自动答题（可选功能，DeepSeek）
+
+当题库中查不到某道题时，脚本会**可选地**调用 DeepSeek AI 来智能作答并自动勾选，进一步减少漏题。
+
+## 使用方法（只需配置一次）
+
+1. 到 [https://platform.deepseek.com](https://platform.deepseek.com) 注册，获取一个 API Key（`sk-` 开头）。
+2. 在浏览器控制台（考试页面）执行一次：
+
+   ```js
+   localStorage.setItem('fdty_deepseek_key', 'sk-你的key')
+   ```
+
+   之后每次运行会自动读取，不需要再输入。Key **只保存在你自己的浏览器里**，不会上传到任何服务器。
+
+   （如果没预先配置，脚本运行时也会弹窗询问一次，输入后自动保存。）
+
+3. 可选配置项（都在控制台执行一次即可）：
+
+   ```js
+   // 指定模型（默认自动探测，优先 deepseek-v4-flash）
+   localStorage.setItem('fdty_deepseek_model', 'deepseek-v4-flash')
+
+   // 思考强度 low / medium / high（默认 low；high 会过度思考导致超时，不建议）
+   localStorage.setItem('fdty_deepseek_effort', 'low')
+
+   // 联网搜索增强（可选）：到 https://tavily.com 免费注册 key，失配题会先搜资料再给 AI 推理
+   localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
+   ```
+
+## 工作方式
+
+- 题库精确匹配 / 模糊匹配（Levenshtein）失败的题，会被批量发给 DeepSeek；
+- AI 返回后自动勾选对应选项，控制台会打印 `AI自动作答：...`；
+- 未配置 Key 或调用失败时，脚本自动跳过，不影响原有的题库自动答题；
+- 单选项会连题目选项一起发给 AI，便于准确作答；
+- 联网搜索（Tavily）为可选增强，未配置则只使用 AI 的知识。
