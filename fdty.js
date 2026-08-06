@@ -222,10 +222,12 @@
             } catch (e) {}
             callback(chosen);
         }).catch(function () {
-            // /models 探测失败（如网络抖动）：优先用已缓存模型；否则回退到优先级最高的模型
+            // /models 探测失败（如网络抖动）：仅在缓存 key 与当前 key 一致时复用缓存模型；
+            // 否则（换过 key）回退到优先级最高的模型，避免用旧 key 的模型导致 model not found
             try {
                 var cached = localStorage.getItem('fdty_detected_model');
-                if (cached) { callback(cached); return; }
+                var cachedKey = localStorage.getItem('fdty_detected_model_key');
+                if (cached && cachedKey === apiKey) { callback(cached); return; }
             } catch (e) {}
             callback(DEEPSEEK_MODEL_PRIORITY[0]);
         });
@@ -265,16 +267,16 @@
             var idx = parseInt(m[1], 10);
             if (idx < 1 || idx > questionCount) continue;
             var rest = m[2].trim();
-            // 在剩余内容里找第一个答案 token：对/错/正确/错误/A-D
-            var am = rest.match(/(正确|错误|对|错|[ABCD])/i);
+            // 在剩余内容里找第一个答案 token：对/错/正确/错误/A-D（A-D 要求是独立字母，
+            // 后面不能跟大写字母，避免匹配到 Computer/Answer 等英文单词里的字母）
+            var am = rest.match(/(正确|错误|对|错|([ABCD])(?![A-Z]))/i);
             if (!am) continue;
             // 排除常见干扰：
-            // 1) 答案 token 前紧跟“正确/答案/是/选/项/为”等词 → 可能是解释文字
-            // 2) 答案 token 后还跟着另一个选项字母（如“正确答案是A”“选B”）→ 是解释而非答案
+            // 1) 答案 token 前紧跟解释性文字（中英文）→ 可能是解释而非答案
             var before = rest.slice(0, am.index);
-            if (/正确|错误|答案|是|选|项|为/i.test(before)) continue;
-            // 若答案是“对/错/正确/错误”这类判断题答案，但后面还跟着选项字母（如“正确答案是A”“选B”），
-            // 说明它在解释而非作答，跳过避免误判。
+            if (/正确|错误|答案|是|选|项|为|\b(?:correct|answer|is|choose|option)\b/i.test(before)) continue;
+            // 2) 若答案是“对/错/正确/错误”这类判断题答案，但后面还跟着选项字母（如“正确答案是A”“选B”），
+            //    说明它在解释而非作答，跳过避免误判。
             if (/^(正确|错误|对|错)$/i.test(am[1])) {
                 var after = rest.slice(am.index + am[1].length);
                 if (/[ABCD]/i.test(after)) continue;
