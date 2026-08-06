@@ -45,6 +45,10 @@
 
 	var fdty_src="//ke.wang/fdty/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
+**想用 AI 答题库外的新题？** 把 DeepSeek API Key 直接拼在加载地址里（`?key=` 后面），一次粘贴全部搞定，之后不用再配置：
+
+	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+
 
 ### 5. 检查试卷、补充数据库中没有的题目的答案、交卷
 ![show](screenshots/3.png?2017-5-22)
@@ -90,17 +94,13 @@
 ## 使用方法（只需配置一次）
 
 1. 到 [https://platform.deepseek.com](https://platform.deepseek.com) 注册，获取一个 API Key（`sk-` 开头）。
-2. 在浏览器控制台（考试页面）执行一次：
+2. **最简单的方式**：把 Key 拼在加载代码的 `?key=` 后面（见上方第 4 步），粘贴回车即可。脚本会自动把 Key 保存到浏览器，之后每次考试直接用原来的加载代码就行，不需要再带 Key。
 
-   ```js
-   localStorage.setItem('fdty_deepseek_key', 'sk-你的key')
-   ```
+   Key **只保存在你自己的浏览器里**，不会上传到任何服务器。
 
-   之后每次运行会自动读取，不需要再输入。Key **只保存在你自己的浏览器里**，不会上传到任何服务器。
+   （也可以不拼 Key，脚本运行时会自动弹窗让你粘贴一次。）
 
-   （如果没预先配置，脚本运行时也会弹窗询问一次，输入后自动保存。）
-
-3. 可选配置项（都在控制台执行一次即可）：
+3. 可选配置项（都可在控制台执行一次）：
 
    ```js
    // 指定模型（默认自动探测，优先 deepseek-v4-flash）
@@ -110,6 +110,7 @@
    localStorage.setItem('fdty_deepseek_effort', 'low')
 
    // 联网搜索增强（可选）：到 https://tavily.com 免费注册 key，失配题会先搜资料再给 AI 推理
+   // 也可以像 API Key 一样拼在加载地址里：fdty.js?key=sk-xxx&tavily=tvly-xxx
    localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
    ```
 

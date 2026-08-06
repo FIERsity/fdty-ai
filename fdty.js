@@ -23,7 +23,22 @@
         console.error("复旦体育理论考试-自动答题机器已经更新，请至https://github.com/KevinWang15/fdty查看。");
         return;
     } else {
-        base_url = window.fdty_src.replace(/fdty.js$/, '')
+        // 支持从加载地址带参数传入 Key：fdty.js?key=sk-xxx&tavily=tvly-xxx
+        // 用户把 Key 拼进加载代码即可，脚本自动保存到 localStorage，下次无需再配。
+        var _keyParam = window.fdty_src.match(/[?&]key=([^&]+)/);
+        if (_keyParam && _keyParam[1]) {
+            try {
+                localStorage.setItem('fdty_deepseek_key', decodeURIComponent(_keyParam[1]));
+                console.info('已从加载地址读取并保存 DeepSeek API Key，下次运行无需再配置。');
+            } catch (e) {}
+        }
+        var _tavilyParam = window.fdty_src.match(/[?&]tavily=([^&]+)/);
+        if (_tavilyParam && _tavilyParam[1]) {
+            try {
+                localStorage.setItem('fdty_tavily_key', decodeURIComponent(_tavilyParam[1]));
+            } catch (e) {}
+        }
+        base_url = window.fdty_src.split('?')[0].replace(/fdty.js$/, '')
     }
 
     function stripUnimportantChars(str) {
