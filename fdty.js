@@ -16,6 +16,7 @@
 (function () {
 
     var base_url;
+    var db_url = null;   // 题库独立源（默认与脚本同源，可通过 ?db= 或 localStorage 指定，如国内用户指向 ke.wang）
     var stats = {total: 0, successful: 0};
     var pendingQuestions = [];  // 题库未收录、待 DeepSeek AI 解答的题目
 
@@ -23,7 +24,7 @@
         console.error("复旦体育理论考试-自动答题机器已经更新，请至https://github.com/KevinWang15/fdty查看。");
         return;
     } else {
-        // 支持从加载地址带参数传入 Key：fdty.js?key=sk-xxx&tavily=tvly-xxx
+        // 支持从加载地址带参数传入 Key：fdty.js?key=sk-xxx&tavily=tvly-xxx&db=https://ke.wang/fdty/database.js
         // 用户把 Key 拼进加载代码即可，脚本自动保存到 localStorage，下次无需再配。
         var _keyParam = window.fdty_src.match(/[?&]key=([^&]+)/);
         if (_keyParam && _keyParam[1]) {
@@ -37,6 +38,13 @@
             try {
                 localStorage.setItem('fdty_tavily_key', decodeURIComponent(_tavilyParam[1]));
             } catch (e) {}
+        }
+        var _dbParam = window.fdty_src.match(/[?&]db=([^&]+)/);
+        if (_dbParam && _dbParam[1]) {
+            try { db_url = decodeURIComponent(_dbParam[1]).split('?')[0]; } catch (e) {}
+        }
+        if (!db_url) {
+            try { db_url = localStorage.getItem('fdty_db_url'); } catch (e) {}
         }
         base_url = window.fdty_src.split('?')[0].replace(/fdty.js$/, '')
     }
@@ -117,22 +125,38 @@
     }
 
 
-    //以下为加载器
-    function loadScript(url, callback) {
+    //以下为加载器。callback 可选传 onerror：加载失败时调用（用于题库等关键资源回退）
+    function loadScript(url, callback, onerror) {
         var script = document.createElement("script");
         script.type = "text/javascript";
+        var done = false;
+        var timeout = setTimeout(function () {
+            if (!done) { done = true; if (onerror) onerror(); }
+        }, 15000);   // 15 秒超时，避免坏 URL 永久卡住
+
+        function ok() {
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+            if (callback) callback();
+        }
+        function fail() {
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+            if (onerror) onerror();
+        }
 
         if (script.readyState) {
             script.onreadystatechange = function () {
                 if (script.readyState == "loaded" || script.readyState == "complete") {
                     script.onreadystatechange = null;
-                    callback();
+                    ok();
                 }
             };
         } else {
-            script.onload = function () {
-                callback();
-            };
+            script.onload = ok;
+            script.onerror = fail;
         }
 
         script.src = url;
@@ -412,24 +436,40 @@
                     console.info('成功找到题目！');
                     console.info('正在下载题库，请稍后（比较大，要下载一会儿）');
 
-                    loadScript(base_url + 'database.js?' + (+new Date()), function () {
-                        console.info('题库下载成功！总共' + Object.keys(window.fdty_database).length + "条记录");
+                    // 组装题库 URL：db_url 已带 query 则用 & 追加时间戳，否则用 ?
+                    var dbUrl = db_url || (base_url + 'database.js');
+                    dbUrl += (dbUrl.indexOf('?') >= 0 ? '&' : '?') + (+new Date());
+                    var loadDb = function (url) {
+                        loadScript(url, function () {
+                            console.info('题库下载成功！总共' + Object.keys(window.fdty_database).length + "条记录");
 
-                        for (var i = 3; i > 0; i--) {
-                            var panel = window.jQuery('#Panel' + i);
-                            if (panel.length)
-                                doWork(panel);
-                        }
+                            for (var i = 3; i > 0; i--) {
+                                var panel = window.jQuery('#Panel' + i);
+                                if (panel.length)
+                                    doWork(panel);
+                            }
 
-                        console.info('总共' + stats.total + "题，匹配成功" + stats.successful + "题。\n　");
+                            console.info('总共' + stats.total + "题，匹配成功" + stats.successful + "题。\n　");
 
-                        if (pendingQuestions.length > 0) {
-                            solveWithDeepSeek(pendingQuestions);
-                        }
+                            if (pendingQuestions.length > 0) {
+                                solveWithDeepSeek(pendingQuestions);
+                            }
 
-                        console.warn('程序完成，请【仔细核对】！\n请过几分钟，等计时器走到一个正常数字了，再交卷！');
-                        console.log('%c反馈问题: https://github.com/KevinWang15/fdty/issues', 'color: #AAA;');
-                    });
+                            console.warn('程序完成，请【仔细核对】！\n请过几分钟，等计时器走到一个正常数字了，再交卷！');
+                            console.log('%c反馈问题: https://github.com/KevinWang15/fdty/issues', 'color: #AAA;');
+                        }, function () {
+                            // 题库加载失败：若是自定义 db_url 导致的，清除它并回退到同源题库重试一次
+                            if (db_url) {
+                                console.error('自定义题库源加载失败，已回退到默认题库源：' + db_url);
+                                try { localStorage.removeItem('fdty_db_url'); } catch (e) {}
+                                db_url = null;
+                                loadDb(base_url + 'database.js?' + (+new Date()));
+                            } else {
+                                console.error('题库下载失败，请检查网络后刷新页面重试。');
+                            }
+                        });
+                    };
+                    loadDb(dbUrl);
                 }
             }, 100);
 
