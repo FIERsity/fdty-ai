@@ -72,7 +72,7 @@
 
 虽然题库已经比较全了，但体育部仍然会偶尔新加一些题、改一些题的。
 
-如果您手上有新的题库，请[点击这个链接](https://github.com/KevinWang15/fdty/issues/3)分享给我。
+如果您手上有新的题库，请[点击这个链接](https://github.com/KevinWang15/fdty/issues/3)分享给原作者。
 
 （注意：分享单选题答案的时候，重要的是答案选项哦（A B C D），这是程序做自动勾选的依据，分享时一定要带上）
 
@@ -92,9 +92,18 @@
 
 # AI 自动答题（可选，DeepSeek）
 
-题库里没有的题，可以让 AI 帮您答。**完全可选**：不带 Key 运行就和以前一样，不会启用 AI，也不会弹窗。
+题库里没有的题，可以让 AI 帮您答。
 
-想用的话，把 Key 拼进第 4 步的加载地址（`?key=sk-你的KEY`）即可，脚本会自动记住，下次不用再带。Key 到 [platform.deepseek.com](https://platform.deepseek.com) 免费获取，**只保存在您自己的浏览器里，不会上传**。
+复制以下代码，粘贴、运行
+![show](screenshots/2.png?2017-5-22)
+
+	var fdty_src="//ke.wang/fdty/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+
+想让 AI 答题库外的新题？把 Key 拼进加载地址（`?key=`）即可，一次粘贴搞定：
+
+	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+
+Key 到 [platform.deepseek.com](https://platform.deepseek.com) 免费获取，**只保存在您自己的浏览器里，不会上传**。
 
 （可选）想换模型、调思考强度、开联网搜索，在控制台执行一次：
 
