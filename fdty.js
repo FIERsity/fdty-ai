@@ -16,6 +16,7 @@
 (function () {
 
     var base_url;
+    var db_url = null;   // 题库独立源（默认与脚本同源，可通过 ?db= 或 localStorage 指定，如国内用户指向 ke.wang）
     var stats = {total: 0, successful: 0};
     var pendingQuestions = [];  // 题库未收录、待 DeepSeek AI 解答的题目
 
@@ -23,7 +24,7 @@
         console.error("复旦体育理论考试-自动答题机器已经更新，请至https://github.com/KevinWang15/fdty查看。");
         return;
     } else {
-        // 支持从加载地址带参数传入 Key：fdty.js?key=sk-xxx&tavily=tvly-xxx
+        // 支持从加载地址带参数传入 Key：fdty.js?key=sk-xxx&tavily=tvly-xxx&db=https://ke.wang/fdty/database.js
         // 用户把 Key 拼进加载代码即可，脚本自动保存到 localStorage，下次无需再配。
         var _keyParam = window.fdty_src.match(/[?&]key=([^&]+)/);
         if (_keyParam && _keyParam[1]) {
@@ -37,6 +38,13 @@
             try {
                 localStorage.setItem('fdty_tavily_key', decodeURIComponent(_tavilyParam[1]));
             } catch (e) {}
+        }
+        var _dbParam = window.fdty_src.match(/[?&]db=([^&]+)/);
+        if (_dbParam && _dbParam[1]) {
+            try { db_url = decodeURIComponent(_dbParam[1]).split('?')[0]; } catch (e) {}
+        }
+        if (!db_url) {
+            try { db_url = localStorage.getItem('fdty_db_url'); } catch (e) {}
         }
         base_url = window.fdty_src.split('?')[0].replace(/fdty.js$/, '')
     }
@@ -412,7 +420,9 @@
                     console.info('成功找到题目！');
                     console.info('正在下载题库，请稍后（比较大，要下载一会儿）');
 
-                    loadScript(base_url + 'database.js?' + (+new Date()), function () {
+                    var dbUrl = db_url || (base_url + 'database.js');
+                    dbUrl += (dbUrl.indexOf('?') >= 0 ? '&' : '?') + (+new Date());
+                    loadScript(dbUrl, function () {
                         console.info('题库下载成功！总共' + Object.keys(window.fdty_database).length + "条记录");
 
                         for (var i = 3; i > 0; i--) {
