@@ -45,7 +45,7 @@
 
 	var fdty_src="//ke.wang/fdty/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
-**想用 AI 答题库外的新题？** 把 DeepSeek API Key 直接拼在加载地址里（`?key=` 后面），一次粘贴全部搞定，之后不用再配置：
+想让 AI 答题库外的新题？把 Key 拼进加载地址（`?key=`）即可，一次粘贴搞定：
 
 	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
@@ -87,38 +87,16 @@
 
 然后运行```node generate.js```就行了，谢谢。
 
-# AI 自动答题（可选功能，DeepSeek）
+# AI 自动答题（可选，DeepSeek）
 
-当题库中查不到某道题时，脚本会**可选地**调用 DeepSeek AI 来智能作答并自动勾选，进一步减少漏题。
+题库里没有的题，可以让 AI 帮您答。**完全可选**：不带 Key 运行就和以前一样，不会启用 AI，也不会弹窗。
 
-## 使用方法（完全可选，不用就不启用）
+想用的话，把 Key 拼进第 4 步的加载地址（`?key=sk-你的KEY`）即可，脚本会自动记住，下次不用再带。Key 到 [platform.deepseek.com](https://platform.deepseek.com) 免费获取，**只保存在您自己的浏览器里，不会上传**。
 
-**AI 答题是可选的**：不用的人直接按上方第 4 步的原始加载代码运行即可，行为与旧版完全一致（不弹窗、不打扰）；想用的人把 Key 拼进加载地址即可。
+（可选）想换模型、调思考强度、开联网搜索，在控制台执行一次：
 
-1. 到 [https://platform.deepseek.com](https://platform.deepseek.com) 注册，获取一个 API Key（`sk-` 开头）。
-2. **最简单的方式**：把 Key 拼在加载代码的 `?key=` 后面（见上方第 4 步带 Key 版），粘贴回车即可。脚本会自动把 Key 保存到浏览器，之后每次考试直接用原来的加载代码就行，不需要再带 Key。
+	localStorage.setItem('fdty_deepseek_model', 'deepseek-v4-flash')
+	localStorage.setItem('fdty_deepseek_effort', 'low')
+	localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
 
-   Key **只保存在你自己的浏览器里**，不会上传到任何服务器。
-
-3. 可选配置项（都可在控制台执行一次）：
-
-   ```js
-   // 指定模型（默认自动探测，优先 deepseek-v4-flash）
-   localStorage.setItem('fdty_deepseek_model', 'deepseek-v4-flash')
-
-   // 思考强度 low / medium / high（默认 low；high 会过度思考导致超时，不建议）
-   localStorage.setItem('fdty_deepseek_effort', 'low')
-
-   // 联网搜索增强（可选）：到 https://tavily.com 免费注册 key，失配题会先搜资料再给 AI 推理
-   // 也可以像 API Key 一样拼在加载地址里：fdty.js?key=sk-xxx&tavily=tvly-xxx
-   localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
-   ```
-
-## 工作方式
-
-- **未配置 Key（或 Key 留空）时不启用**：与原始脚本行为完全一致，失配题只提示你手动作答；
-- 题库精确匹配 / 模糊匹配（Levenshtein）失败的题，会被批量发给 DeepSeek；
-- AI 返回后自动勾选对应选项，控制台会打印 `AI自动作答：...`；
-- 未配置 Key 或调用失败时，脚本自动跳过，不影响原有的题库自动答题；
-- 单选项会连题目选项一起发给 AI，便于准确作答；
-- 联网搜索（Tavily）为可选增强，未配置则只使用 AI 的知识。
+失配题会连选项一起发给 AI，答完自动勾选，控制台会打印 `AI自动作答`。
