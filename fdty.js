@@ -181,16 +181,12 @@
     var DEEPSEEK_API = 'https://api.deepseek.com/chat/completions';
     var DEEPSEEK_MODELS_URL = 'https://api.deepseek.com/models';
 
-    function getStoredKey(name, tip) {
+    // 读取本地配置的 Key。AI 答题是可选功能：没配 Key 就完全不用，不打扰用户。
+    function getStoredKey(name) {
         try {
             var v = localStorage.getItem(name);
             if (v) return v;
         } catch (e) {}
-        var input = window.prompt(tip);
-        if (input && input.trim()) {
-            try { localStorage.setItem(name, input.trim()); } catch (e) {}
-            return input.trim();
-        }
         return null;
     }
 
@@ -248,8 +244,8 @@
     }
 
     function askDeepSeek(questions, callback) {
-        var apiKey = getStoredKey('fdty_deepseek_key', '请输入 DeepSeek API Key（https://platform.deepseek.com 获取，仅保存在本机浏览器，不会上传）：\n若不想使用 AI 答题，直接点取消即可。');
-        if (!apiKey) { console.warn('未配置 DeepSeek API Key，跳过 AI 答题。'); callback([]); return; }
+        var apiKey = getStoredKey('fdty_deepseek_key');
+        if (!apiKey) { callback([]); return; }   // 未配置 Key：完全静默跳过，AI 答题为可选功能
 
         detectDeepSeekModel(apiKey, function (model) {
             var lines = questions.map(function (q, i) {
