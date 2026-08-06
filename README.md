@@ -108,3 +108,11 @@ Key 到 [platform.deepseek.com](https://platform.deepseek.com) 获取，**只保
 	localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
 
 失配题会连选项一起发给 AI，答完自动勾选，控制台会打印 `AI自动作答`。
+
+## 备用加载方案（gh-proxy）
+
+如果上面的地址加载失败（比如 jsDelivr 暂时连不上），可以用 GitHub 反向代理 `gh-proxy.com` 作为备用源，效果一样：
+
+	var fdty_src="https://gh-proxy.com/https://raw.githubusercontent.com/FIERsity/fdty-ai/master/fdty.js?db=https://ke.wang/fdty/database.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + (fdty_src.indexOf('?') >= 0 ? '&' : '?') + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+
+想用 AI 答题就把 Key 拼上：`?key=sk-你的KEY&db=...`。此代理为第三方服务，稳定性不保证，仅作兜底。
