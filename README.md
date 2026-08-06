@@ -46,11 +46,11 @@
 ### 4. 复制以下代码，粘贴、运行
 ![show](screenshots/2.png?2017-5-22)
 
-	var fdty_src="//ke.wang/fdty/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+	var fdty_src="https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
 想让 AI 答题库外的新题？把 Deepseek的APIKey 拼进加载地址（`?key=`）即可，一次粘贴搞定：
 
-	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+	var fdty_src="https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
 
 ### 5. 检查试卷、补充数据库中没有的题目的答案、交卷
@@ -97,7 +97,7 @@
 复制以下代码，粘贴、运行
 ![show](screenshots/2.png?2017-5-22)
 
-	var fdty_src="//ke.wang/fdty/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+	var fdty_src="https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js?key=sk-你的KEY";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + '?' + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
 Key 到 [platform.deepseek.com](https://platform.deepseek.com) 获取，**只保存在您自己的浏览器里，不会上传**。
 
