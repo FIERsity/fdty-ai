@@ -193,27 +193,42 @@
     }
 
     // 探测可用的 DeepSeek 模型（兼容 deepseek-chat / deepseek-v4-pro / deepseek-v4-flash / deepseek-reasoner）
-    // 结果缓存到 localStorage，避免每次运行都请求 /models
+    // 结果缓存到 localStorage（绑定 key，key 变化则重新探测），避免每次运行都请求 /models
+    var DEEPSEEK_MODEL_PRIORITY = ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-pro', 'deepseek-reasoner'];
+
     function detectDeepSeekModel(apiKey, callback) {
         try {
             var configured = localStorage.getItem('fdty_deepseek_model');
             if (configured) { callback(configured); return; }
         } catch (e) {}
-        var cached = null;
-        try { cached = localStorage.getItem('fdty_detected_model'); } catch (e) {}
-        if (cached) { callback(cached); return; }
+        // 缓存绑定 key：只有当前 key 与缓存时一致才复用，换 key 后重新探测
+        try {
+            if (localStorage.getItem('fdty_detected_model_key') === apiKey) {
+                var cached = localStorage.getItem('fdty_detected_model');
+                if (cached) { callback(cached); return; }
+            }
+        } catch (e) {}
         fetch(DEEPSEEK_MODELS_URL, {
             headers: { 'Authorization': 'Bearer ' + apiKey }
         }).then(function (res) { return res.json(); }).then(function (data) {
             var ids = ((data && data.data) || []).map(function (m) { return m.id; });
-            var priority = ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-pro', 'deepseek-reasoner'];
-            var chosen = ids[0] || 'deepseek-chat';
-            for (var i = 0; i < priority.length; i++) {
-                if (ids.indexOf(priority[i]) >= 0) { chosen = priority[i]; break; }
+            var chosen = ids[0] || DEEPSEEK_MODEL_PRIORITY[0];
+            for (var i = 0; i < DEEPSEEK_MODEL_PRIORITY.length; i++) {
+                if (ids.indexOf(DEEPSEEK_MODEL_PRIORITY[i]) >= 0) { chosen = DEEPSEEK_MODEL_PRIORITY[i]; break; }
             }
-            try { localStorage.setItem('fdty_detected_model', chosen); } catch (e) {}
+            try {
+                localStorage.setItem('fdty_detected_model', chosen);
+                localStorage.setItem('fdty_detected_model_key', apiKey);
+            } catch (e) {}
             callback(chosen);
-        }).catch(function () { callback('deepseek-chat'); });
+        }).catch(function () {
+            // /models 探测失败（如网络抖动）：优先用已缓存模型；否则回退到优先级最高的模型
+            try {
+                var cached = localStorage.getItem('fdty_detected_model');
+                if (cached) { callback(cached); return; }
+            } catch (e) {}
+            callback(DEEPSEEK_MODEL_PRIORITY[0]);
+        });
     }
 
     // 可选：联网搜索（Tavily），把结果作为参考资料喂给 AI
@@ -232,19 +247,39 @@
     }
 
     // 解析 AI 返回的答案文本 -> [{index, answer}]（index 为 0-based 题目序号）
-    // 先把“序号.答案”用换行拆开（兼容挤在一行），再逐行提取，容忍行尾收尾词（如“完成”“谢谢”）
+    // 匹配“序号.答案”，容忍答案后附加的标点/收尾词（如 “A。” “对 ” “D 完成”），
+    // 也兼容挤在一行、带前缀等情况。
     function parseDeepSeekAnswers(content, questionCount) {
         var results = [];
-        var text = String(content || '').replace(/(\d+)\s*[.、:：)\]](?=\s*[正确错误对错ABCD])/g, '\n$&');
+        var text = String(content || '');
+        // 先把“序号.答案”拆成行（在数字+分隔符前插换行），兼容挤在一行的情况
+        var re = /(\d+)\s*[.、:：)\]](?=\s*[正确错误对错ABCD])/g;
+        text = text.replace(re, '\n$&');
         var lines = text.split(/\r?\n/);
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim();
             if (!line) continue;
-            var m = line.match(/^(\d+)\s*[.、:：)\]][\s\S]*?(正确|错误|对|错|[ABCD])\s*$/i);
+            // 必须以“序号+分隔符”开头（排除纯解释文字），然后提取答案 token
+            var m = line.match(/^(\d+)\s*[.、:：)\]](.*)$/i);
             if (!m) continue;
             var idx = parseInt(m[1], 10);
             if (idx < 1 || idx > questionCount) continue;
-            var raw = m[2].toUpperCase();
+            var rest = m[2].trim();
+            // 在剩余内容里找第一个答案 token：对/错/正确/错误/A-D
+            var am = rest.match(/(正确|错误|对|错|[ABCD])/i);
+            if (!am) continue;
+            // 排除常见干扰：
+            // 1) 答案 token 前紧跟“正确/答案/是/选/项/为”等词 → 可能是解释文字
+            // 2) 答案 token 后还跟着另一个选项字母（如“正确答案是A”“选B”）→ 是解释而非答案
+            var before = rest.slice(0, am.index);
+            if (/正确|错误|答案|是|选|项|为/i.test(before)) continue;
+            // 若答案是“对/错/正确/错误”这类判断题答案，但后面还跟着选项字母（如“正确答案是A”“选B”），
+            // 说明它在解释而非作答，跳过避免误判。
+            if (/^(正确|错误|对|错)$/i.test(am[1])) {
+                var after = rest.slice(am.index + am[1].length);
+                if (/[ABCD]/i.test(after)) continue;
+            }
+            var raw = am[1].toUpperCase();
             var answer;
             if (raw === '对' || raw === '正确') answer = true;
             else if (raw === '错' || raw === '错误') answer = false;
@@ -273,24 +308,27 @@
                     (refText ? '\n参考资料（来自网络搜索，可能包含答案线索，仅供参考）：\n' + refText + '\n' : '') +
                     '\n题目：\n' + lines.join('\n');
 
+                // reasoning_effort 仅对推理类模型（v4 / reasoner）生效，避免 deepseek-chat 等非推理模型报错
+                var payload = {
+                    model: model,
+                    messages: [
+                        { role: 'system', content: '你是复旦体育理论考试答题助手，只输出简洁答案，不解释。' },
+                        { role: 'user', content: promptText }
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 3000
+                };
+                if (/v4|reasoner/i.test(model)) payload.reasoning_effort = effort;
+
                 fetch(DEEPSEEK_API, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + apiKey
                     },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: [
-                            { role: 'system', content: '你是复旦体育理论考试答题助手，只输出简洁答案，不解释。' },
-                            { role: 'user', content: promptText }
-                        ],
-                        temperature: 0.1,
-                        max_tokens: 3000,
-                        reasoning_effort: effort
-                    })
+                    body: JSON.stringify(payload)
                 }).then(function (r) {
-                    if (!r.ok) throw new Error('DeepSeek HTTP ' + r.status);
+                    if (!r.ok) throw new Error(r.status === 401 ? 'API Key 无效或已过期' : 'DeepSeek HTTP ' + r.status);
                     return r.json();
                 }).then(function (data) {
                     var content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
@@ -326,9 +364,12 @@
             var q = questions[a.index];
             if (!q) return;
             var el = null;
+            // 按题型校验答案类型，防止 AI 类型错配（如把判断题答成字母、单选答成对/错）导致异常
             if (q.type === 'trueOrFalse') {
+                if (a.answer !== true && a.answer !== false) return;
                 el = getRadioButtonElement(q.index, a.answer);
             } else {
+                if (typeof a.answer !== 'string' || !/^[ABCD]$/i.test(a.answer)) return;
                 el = getRadioButtonElementForMultipleSelection(q.index, a.answer);
             }
             if (el) {
