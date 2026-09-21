@@ -396,13 +396,16 @@
             '禁止输出任何解释或思考过程。\n';
 
         var triedModelRetry = false, triedRelax = false, triedStripParams = false;
-        // 是否开启思考模式，默认关闭。为什么默认关（40 题、以题库答案为基准实测）：
-        //   关闭思考：准确率 91.8%（7 轮），输出 155 tokens，耗时 1.4 秒
-        //   开启思考：准确率 90.7%（11 轮），思考 5000~7000 tokens，耗时 33 秒
-        //   （thinking:adaptive 与 enabled 表现一样，并不会真的少思考）
-        // 体育常识 + 教材知识点这类题不吃推理，开思考只是更慢更贵，准确率没有可测量的提升；
-        // 更关键的是思考与答案共用 max_tokens，预算不够时 content 会直接为空、答案全丢
-        // （旧版默认 3000 就是踩了这个坑，实测 40 题 0/40）。
+        // 是否开启思考模式，默认关闭。为什么默认关——以题库答案为基准，40 题 × 各 6 轮实测：
+        //   关闭思考：               准确率 92.5%，思考 0 tokens，     耗时 1.3 秒，6 轮结果完全一致
+        //   开启思考+reasoning_effort=low：准确率 90.8%，思考约 3900 tokens，耗时 23.2 秒，每轮有波动
+        //   差 1.7 个百分点、标准误 2.5 个百分点 → 在噪声范围内，没有可测量的提升。
+        // 两处佐证：两种配置里始终答错的是同样 3 道题（多半是题库答案本身有误，思考也救不回来）；
+        // 而开思考会额外引入新的偶发错误，结果不再可复现——考试工具里可复现比"多想一步"更重要。
+        // 更要紧的是思考与答案共用 max_tokens，预算不够时 content 直接为空、答案全丢
+        // （旧版固定 3000 正是踩了这个坑，实测 40 题 0/40）。
+        // 注：reasoning_effort 本身是有效的（v4-pro 上 low 能把思考从 ~990 降到 ~28 tokens），
+        // 但真正决定"要不要思考"的是 thinking 参数。
         // 想自己对比：localStorage.setItem('fdty_deepseek_thinking', 'on')
         var thinkingOn = false;
         try { thinkingOn = localStorage.getItem('fdty_deepseek_thinking') === 'on'; } catch (e) {}
