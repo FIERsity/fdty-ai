@@ -105,18 +105,28 @@
             }
 
             successCount++;
+            // 找不到对应选项时不能直接 .click()——那会抛 TypeError 中断整个循环，
+            // 后面的题（包括 AI 兜底）全都不会处理。这里逐个判空并跳过。
+            var clickSafe = function (el, msg, color, text) {
+                if (!el) {
+                    console.warn('未找到对应选项，已跳过（题库与页面题号可能错位），请手动核对：' + text);
+                    return;
+                }
+                el.click();
+                console.log(msg, color, 'color: black');
+            };
             if (answer === true) {
                 questionI.trueOrFalse++;
-                getRadioButtonElement(questionI.trueOrFalse, answer).click();
-                console.log((questionI.trueOrFalse + 1) + "." + '%c√正确 %c' + question.text, 'color: green', 'color: black');
+                clickSafe(getRadioButtonElement(questionI.trueOrFalse, answer),
+                    (questionI.trueOrFalse + 1) + "." + '%c√正确 %c' + question.text, 'color: green', question.text);
             } else if (answer === false) {
                 questionI.trueOrFalse++;
-                getRadioButtonElement(questionI.trueOrFalse, answer).click();
-                console.log((questionI.trueOrFalse + 1) + "." + '%c×错误 %c' + question.text, 'color: red', 'color: black');
+                clickSafe(getRadioButtonElement(questionI.trueOrFalse, answer),
+                    (questionI.trueOrFalse + 1) + "." + '%c×错误 %c' + question.text, 'color: red', question.text);
             } else {
                 questionI.choice++;
-                getRadioButtonElementForMultipleSelection(questionI.choice, answer).click();
-                console.log((questionI.choice + 1) + "." + '%c答案：' + answer + ' %c' + question.text, 'color: orange', 'color: black');
+                clickSafe(getRadioButtonElementForMultipleSelection(questionI.choice, answer),
+                    (questionI.choice + 1) + "." + '%c答案：' + answer + ' %c' + question.text, 'color: orange', question.text);
             }
         });
 
@@ -200,8 +210,7 @@
     //   2) 控制台执行 localStorage.setItem('fdty_deepseek_key', 'sk-xxx')
     // Key 仅保存在本机浏览器 localStorage，不会上传到任何地方。
     // 可选配置（控制台执行一次）：
-    //   localStorage.setItem('fdty_deepseek_model', 'deepseek-chat')  指定模型（默认自动探测，优先 deepseek-v4-flash）
-    //   localStorage.setItem('fdty_deepseek_effort', 'low')           思考强度 low/medium/high（默认 low，high 会过度思考导致超时）
+    //   localStorage.setItem('fdty_deepseek_model', 'deepseek-flash') 指定模型（默认自动探测：取 /models 实时清单里最便宜、最快的那个）
     //   localStorage.setItem('fdty_tavily_key', 'tvly-xxx')           配置 Tavily 联网搜索（https://tavily.com 免费）
 
     var DEEPSEEK_API = 'https://api.deepseek.com/chat/completions';
@@ -216,44 +225,78 @@
         return null;
     }
 
-    // 探测可用的 DeepSeek 模型（兼容 deepseek-chat / deepseek-v4-pro / deepseek-v4-flash / deepseek-reasoner）
-    // 结果缓存到 localStorage（绑定 key，key 变化则重新探测），避免每次运行都请求 /models
-    var DEEPSEEK_MODEL_PRIORITY = ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-v4-pro', 'deepseek-reasoner'];
+    // 探测可用的 DeepSeek 模型。
+    // 注意：DeepSeek 的模型名换得很勤（deepseek-chat/reasoner → deepseek-v4-flash/v4-pro → …），
+    // 写死"某个名字一定可用"迟早会失效（旧名一停用，AI 就永久静默失败）。
+    // 所以这里不写死具体型号，而是每次从 /models 拿**实时清单**，按"便宜、快"的规则挑一个。
+    var MODEL_EXCLUDE = /embed|rerank|tts|whisper|audio|moderation|image|vision|ocr/i;  // 非对话模型
+    var MODEL_CHEAP = /flash|lite|mini|turbo|fast|small|chat/i;   // 便宜、快
+    var MODEL_HEAVY = /pro|max|ultra|reasoner|thinking|large/i;   // 贵、慢
 
-    function detectDeepSeekModel(apiKey, callback) {
+    // 打分：优先便宜/快的（±20 是大方向），版本号只作为同档次的次要偏好
+    function scoreModel(id) {
+        var s = 0;
+        if (MODEL_CHEAP.test(id)) s += 20;
+        if (MODEL_HEAVY.test(id)) s -= 20;
+        var v = id.match(/(\d+)/);
+        if (v) s += parseInt(v[1], 10);
+        return s;
+    }
+
+    function pickModel(ids) {
+        var candidates = ids.filter(function (id) { return id && !MODEL_EXCLUDE.test(id); });
+        if (!candidates.length) candidates = ids.slice();
+        if (!candidates.length) return null;
+        candidates.sort(function (a, b) { return scoreModel(b) - scoreModel(a); });
+        return candidates[0];
+    }
+
+    function clearModelCache() {
+        try {
+            localStorage.removeItem('fdty_detected_model');
+            localStorage.removeItem('fdty_detected_model_key');
+            localStorage.removeItem('fdty_detected_model_time');
+        } catch (e) {}
+    }
+
+    var MODEL_CACHE_TTL = 24 * 60 * 60 * 1000;   // 模型清单会变，缓存最多用 24 小时
+
+    // forceRefresh=true：忽略缓存重新探测（模型调用报 not found 时用）
+    function detectDeepSeekModel(apiKey, callback, forceRefresh) {
         try {
             var configured = localStorage.getItem('fdty_deepseek_model');
             if (configured) { callback(configured); return; }
         } catch (e) {}
-        // 缓存绑定 key：只有当前 key 与缓存时一致才复用，换 key 后重新探测
-        try {
-            if (localStorage.getItem('fdty_detected_model_key') === apiKey) {
-                var cached = localStorage.getItem('fdty_detected_model');
-                if (cached) { callback(cached); return; }
-            }
-        } catch (e) {}
+        // 缓存同时绑定 key 与时间：换 key、或缓存过期，都会重新探测
+        if (!forceRefresh) {
+            try {
+                if (localStorage.getItem('fdty_detected_model_key') === apiKey) {
+                    var cached = localStorage.getItem('fdty_detected_model');
+                    var ts = parseInt(localStorage.getItem('fdty_detected_model_time') || '0', 10);
+                    if (cached && (+new Date() - ts) < MODEL_CACHE_TTL) { callback(cached); return; }
+                }
+            } catch (e) {}
+        }
         fetch(DEEPSEEK_MODELS_URL, {
             headers: { 'Authorization': 'Bearer ' + apiKey }
         }).then(function (res) { return res.json(); }).then(function (data) {
-            var ids = ((data && data.data) || []).map(function (m) { return m.id; });
-            var chosen = ids[0] || DEEPSEEK_MODEL_PRIORITY[0];
-            for (var i = 0; i < DEEPSEEK_MODEL_PRIORITY.length; i++) {
-                if (ids.indexOf(DEEPSEEK_MODEL_PRIORITY[i]) >= 0) { chosen = DEEPSEEK_MODEL_PRIORITY[i]; break; }
-            }
+            var ids = ((data && data.data) || []).map(function (m) { return m && m.id; }).filter(function (x) { return !!x; });
+            var chosen = pickModel(ids);
+            if (!chosen) throw new Error('模型列表为空');
             try {
                 localStorage.setItem('fdty_detected_model', chosen);
                 localStorage.setItem('fdty_detected_model_key', apiKey);
+                localStorage.setItem('fdty_detected_model_time', String(+new Date()));
             } catch (e) {}
             callback(chosen);
         }).catch(function () {
-            // /models 探测失败（如网络抖动）：仅在缓存 key 与当前 key 一致时复用缓存模型；
-            // 否则（换过 key）回退到优先级最高的模型，避免用旧 key 的模型导致 model not found
+            // 探测失败（网络抖动等）：同 key 的旧缓存即使过期也先拿来用——总比没有强。
+            // 若这个模型其实已下架，调用时会报错，届时再清缓存重探（见 askDeepSeek）。
             try {
-                var cached = localStorage.getItem('fdty_detected_model');
-                var cachedKey = localStorage.getItem('fdty_detected_model_key');
-                if (cached && cachedKey === apiKey) { callback(cached); return; }
+                var c = localStorage.getItem('fdty_detected_model');
+                if (c && localStorage.getItem('fdty_detected_model_key') === apiKey) { callback(c); return; }
             } catch (e) {}
-            callback(DEEPSEEK_MODEL_PRIORITY[0]);
+            callback(null);   // 拿不到就不猜名字——猜错只会更难排查
         });
     }
 
@@ -291,6 +334,8 @@
             var idx = parseInt(m[1], 10);
             if (idx < 1 || idx > questionCount) continue;
             var rest = m[2].trim();
+            // 容忍 “1.选A”“1.应选B” 这类写法：剥掉开头的引导词（仅当后面紧跟答案时才剥，"选"本身不是答案）
+            rest = rest.replace(/^(?:应该选|应选|选)\s*(?=[正确错误对错ABCD])/i, '');
             // 在剩余内容里找第一个答案 token：对/错/正确/错误/A-D（A-D 要求是独立字母，
             // 后面不能跟大写字母，避免匹配到 Computer/Answer 等英文单词里的字母）
             var am = rest.match(/(正确|错误|对|错|([ABCD])(?![A-Z]))/i);
@@ -316,57 +361,112 @@
         return results;
     }
 
+    // 发送一次对话请求。HTTP 错误也把 API 的 message 带出来，便于判断该走哪种自愈重试。
+    function postChat(apiKey, payload, onSuccess, onError) {
+        fetch(DEEPSEEK_API, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + apiKey
+            },
+            body: JSON.stringify(payload)
+        }).then(function (r) {
+            if (r.ok) return r.json();
+            return r.json().catch(function () { return {}; }).then(function (body) {
+                var msg = (body && body.error && body.error.message) || ('HTTP ' + r.status);
+                var err = new Error(r.status === 401 ? 'API Key 无效或已过期' : msg);
+                err.status = r.status;
+                throw err;
+            });
+        }).then(function (data) {
+            onSuccess((data && data.choices && data.choices[0]) || {});
+        }).catch(onError);
+    }
+
     function askDeepSeek(questions, callback) {
         var apiKey = getStoredKey('fdty_deepseek_key');
         if (!apiKey) { callback([]); return; }   // 未配置 Key：完全静默跳过，AI 答题为可选功能
 
-        detectDeepSeekModel(apiKey, function (model) {
-            var lines = questions.map(function (q, i) {
-                return (i + 1) + '.[' + (q.type === 'trueOrFalse' ? '判断题' : '单选题') + ']' + q.text;
-            });
+        var lines = questions.map(function (q, i) {
+            return (i + 1) + '.[' + (q.type === 'trueOrFalse' ? '判断题' : '单选题') + ']' + q.text;
+        });
+        var basePrompt = '你是复旦体育理论考试答题助手。请根据体育知识回答以下题目。\n' +
+            '输出要求：每题一行，格式为“序号.答案”。判断题答案只写“对”或“错”；单选题答案只写选项字母 A/B/C/D。\n' +
+            '禁止输出任何解释或思考过程。\n';
 
-            var afterSearch = function (refText) {
-                var effort = 'low';
-                try { effort = localStorage.getItem('fdty_deepseek_effort') || 'low'; } catch (e) {}
-                var promptText = '你是复旦体育理论考试答题助手。请根据体育知识回答以下题目。\n' +
-                    '输出要求：每题一行，格式为“序号.答案”。判断题答案只写“对”或“错”；单选题答案只写选项字母 A/B/C/D。\n' +
-                    '禁止输出任何解释或思考过程。\n' +
-                    (refText ? '\n参考资料（来自网络搜索，可能包含答案线索，仅供参考）：\n' + refText + '\n' : '') +
-                    '\n题目：\n' + lines.join('\n');
+        var triedModelRetry = false, triedRelax = false, triedStripParams = false;
 
-                // reasoning_effort 仅对推理类模型（v4 / reasoner）生效，避免 deepseek-chat 等非推理模型报错
-                var payload = {
-                    model: model,
-                    messages: [
-                        { role: 'system', content: '你是复旦体育理论考试答题助手，只输出简洁答案，不解释。' },
-                        { role: 'user', content: promptText }
-                    ],
-                    temperature: 0.1,
-                    max_tokens: 3000
-                };
-                if (/v4|reasoner/i.test(model)) payload.reasoning_effort = effort;
+        var run = function (model, refText) {
+            var promptText = basePrompt +
+                (refText ? '\n参考资料（来自网络搜索，可能包含答案线索，仅供参考）：\n' + refText + '\n' : '') +
+                '\n题目：\n' + lines.join('\n');
 
-                fetch(DEEPSEEK_API, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + apiKey
-                    },
-                    body: JSON.stringify(payload)
-                }).then(function (r) {
-                    if (!r.ok) throw new Error(r.status === 401 ? 'API Key 无效或已过期' : 'DeepSeek HTTP ' + r.status);
-                    return r.json();
-                }).then(function (data) {
-                    var content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-                    var answers = parseDeepSeekAnswers(content, questions.length);
-                    console.log('%cDeepSeek 返回：' + JSON.stringify(answers), 'color: #6A5ACD');
-                    callback(answers);
-                }).catch(function (err) {
-                    console.error('DeepSeek 调用失败：' + err.message);
-                    callback([]);
-                });
+            var payload = {
+                model: model,
+                messages: [
+                    { role: 'system', content: '你是复旦体育理论考试答题助手，只输出简洁答案，不解释。' },
+                    { role: 'user', content: promptText }
+                ],
+                max_tokens: triedRelax ? 8000 : 3000
             };
+            if (!triedStripParams) {
+                payload.temperature = 0.1;
+                // 关键：显式关闭思考模式。本任务是"题干 → 答案"的简单抽取，不需要思维链。
+                // 实测 deepseek-flash 默认就开思考：40 题时 3000 max_tokens 会被思考全部吃光、
+                // content 为空 → 答案全军覆没；关掉后同样 40 题只花 159 tokens 且全部答对。
+                payload.thinking = { type: 'disabled' };
+            }
 
+            postChat(apiKey, payload, function (choice) {
+                var content = choice.message && choice.message.content;
+                if (!content && choice.finish_reason === 'length' && !triedRelax) {
+                    // 空内容 + 被截断：多半是模型忽略了 thinking:disabled、思考把预算吃光了。
+                    // 加大预算重试一次（只有真踩到这个坑时才多花一次钱）。
+                    triedRelax = true;
+                    console.warn('DeepSeek 返回为空（思考可能占满了 token 预算），正在加大预算重试一次…');
+                    run(model, refText);
+                    return;
+                }
+                if (!content) { callback([]); return; }
+                var answers = parseDeepSeekAnswers(content, questions.length);
+                console.log('%cDeepSeek 返回：' + JSON.stringify(answers), 'color: #6A5ACD');
+                callback(answers);
+            }, function (err) {
+                var m = String((err && err.message) || '');
+                // 模型名失效（下架/改名）：清掉缓存重新探测，用新模型重试一次
+                if (!triedModelRetry && err.status === 400 && /model/i.test(m)) {
+                    triedModelRetry = true;
+                    // 手动指定的模型名（fdty_deepseek_model）也可能已下架：一并清掉，
+                    // 否则重新探测会直接命中这个覆盖值、又拿回同一个坏名字。
+                    try { localStorage.removeItem('fdty_deepseek_model'); } catch (e) {}
+                    console.warn('当前模型不可用（' + m + '），正在重新探测模型…');
+                    clearModelCache();
+                    detectDeepSeekModel(apiKey, function (newModel) {
+                        if (!newModel) { console.error('DeepSeek 调用失败：无法获取可用模型'); callback([]); return; }
+                        console.info('已切换到模型：' + newModel);
+                        run(newModel, refText);
+                    }, true);
+                    return;
+                }
+                // 参数不被该模型支持（如不接受 thinking / temperature）：去掉可选参数重试一次
+                if (!triedStripParams && err.status === 400 && /param|argument|unsupported|unknown/i.test(m)) {
+                    triedStripParams = true;
+                    console.warn('模型不接受可选参数（' + m + '），正在去掉可选参数重试…');
+                    run(model, refText);
+                    return;
+                }
+                console.error('DeepSeek 调用失败：' + m);
+                callback([]);
+            });
+        };
+
+        detectDeepSeekModel(apiKey, function (model) {
+            if (!model) {
+                console.error('DeepSeek 调用失败：未能获取可用模型列表（请检查网络后重试）。');
+                callback([]);
+                return;
+            }
+            console.info('使用模型：' + model);
             // 若配置了 Tavily，先并发搜索（最多 5 题，避免过慢）
             var tavilyKey = null;
             try { tavilyKey = localStorage.getItem('fdty_tavily_key'); } catch (e) {}
@@ -375,10 +475,10 @@
                     return new Promise(function (resolve) { searchWeb(q.text, resolve); });
                 });
                 Promise.all(promises).then(function (refs) {
-                    afterSearch(refs.filter(function (x) { return x; }).join('\n\n'));
+                    run(model, refs.filter(function (x) { return x; }).join('\n\n'));
                 });
             } else {
-                afterSearch('');
+                run(model, '');
             }
         });
     }
@@ -439,8 +539,27 @@
                     // 组装题库 URL：db_url 已带 query 则用 & 追加时间戳，否则用 ?
                     var dbUrl = db_url || (base_url + 'database.js');
                     dbUrl += (dbUrl.indexOf('?') >= 0 ? '&' : '?') + (+new Date());
+                    // 题库加载失败（网络错误，或"加载成功"但没产出 fdty_database——比如 CDN 返回了 HTML 错误页）。
+                    // 若是自定义源导致的，清掉它并回退到同源题库重试一次。
+                    var onDbFail = function () {
+                        if (db_url) {
+                            console.error('自定义题库源加载失败，已回退到默认题库源：' + db_url);
+                            try { localStorage.removeItem('fdty_db_url'); } catch (e) {}
+                            db_url = null;
+                            loadDb(base_url + 'database.js?' + (+new Date()));
+                        } else {
+                            console.error('题库下载失败，请检查网络后刷新页面重试。');
+                        }
+                    };
+
                     var loadDb = function (url) {
                         loadScript(url, function () {
+                            // 必须校验题库真的存在：脚本"加载成功"不等于内容正确，
+                            // 否则下面 Object.keys 会直接抛错、整个流程无声中断。
+                            if (!window.fdty_database || typeof window.fdty_database !== 'object') {
+                                onDbFail();
+                                return;
+                            }
                             console.info('题库下载成功！总共' + Object.keys(window.fdty_database).length + "条记录");
 
                             for (var i = 3; i > 0; i--) {
@@ -457,17 +576,7 @@
 
                             console.warn('程序完成，请【仔细核对】！\n请过几分钟，等计时器走到一个正常数字了，再交卷！');
                             console.log('%c反馈问题: https://github.com/KevinWang15/fdty/issues', 'color: #AAA;');
-                        }, function () {
-                            // 题库加载失败：若是自定义 db_url 导致的，清除它并回退到同源题库重试一次
-                            if (db_url) {
-                                console.error('自定义题库源加载失败，已回退到默认题库源：' + db_url);
-                                try { localStorage.removeItem('fdty_db_url'); } catch (e) {}
-                                db_url = null;
-                                loadDb(base_url + 'database.js?' + (+new Date()));
-                            } else {
-                                console.error('题库下载失败，请检查网络后刷新页面重试。');
-                            }
-                        });
+                        }, onDbFail);
                     };
                     loadDb(dbUrl);
                 }
