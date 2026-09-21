@@ -558,7 +558,7 @@
                     // 若是自定义源导致的，清掉它并回退到同源题库重试一次。
                     var onDbFail = function () {
                         if (db_url) {
-                            console.error('自定义题库源加载失败，已回退到默认题库源：' + db_url);
+                            console.error('自定义题库源加载失败（' + db_url + '），已回退到默认题库源：' + base_url + 'database.js');
                             try { localStorage.removeItem('fdty_db_url'); } catch (e) {}
                             db_url = null;
                             loadDb(base_url + 'database.js?' + (+new Date()));
