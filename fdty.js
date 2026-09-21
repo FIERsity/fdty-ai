@@ -211,6 +211,7 @@
     // Key 仅保存在本机浏览器 localStorage，不会上传到任何地方。
     // 可选配置（控制台执行一次）：
     //   localStorage.setItem('fdty_deepseek_model', 'deepseek-flash') 指定模型（默认自动探测：取 /models 实时清单里最便宜、最快的那个）
+    //   localStorage.setItem('fdty_deepseek_thinking', 'on')          开启思考模式（默认关闭，实测对比见 askDeepSeek 内注释）
     //   localStorage.setItem('fdty_tavily_key', 'tvly-xxx')           配置 Tavily 联网搜索（https://tavily.com 免费）
 
     var DEEPSEEK_API = 'https://api.deepseek.com/chat/completions';
@@ -395,6 +396,18 @@
             '禁止输出任何解释或思考过程。\n';
 
         var triedModelRetry = false, triedRelax = false, triedStripParams = false;
+        // 是否开启思考模式，默认关闭。为什么默认关（40 题、以题库答案为基准实测）：
+        //   关闭思考：准确率 91.8%（7 轮），输出 155 tokens，耗时 1.4 秒
+        //   开启思考：准确率 90.7%（11 轮），思考 5000~7000 tokens，耗时 33 秒
+        //   （thinking:adaptive 与 enabled 表现一样，并不会真的少思考）
+        // 体育常识 + 教材知识点这类题不吃推理，开思考只是更慢更贵，准确率没有可测量的提升；
+        // 更关键的是思考与答案共用 max_tokens，预算不够时 content 会直接为空、答案全丢
+        // （旧版默认 3000 就是踩了这个坑，实测 40 题 0/40）。
+        // 想自己对比：localStorage.setItem('fdty_deepseek_thinking', 'on')
+        var thinkingOn = false;
+        try { thinkingOn = localStorage.getItem('fdty_deepseek_thinking') === 'on'; } catch (e) {}
+        // 预算按题量推算，而不是固定写死：关思考实测约 4 tokens/题，开思考约 150 tokens/题，这里各留足余量
+        var maxTokens = Math.max(3000, questions.length * (thinkingOn ? 400 : 60));
 
         var run = function (model, refText) {
             var promptText = basePrompt +
@@ -407,14 +420,13 @@
                     { role: 'system', content: '你是复旦体育理论考试答题助手，只输出简洁答案，不解释。' },
                     { role: 'user', content: promptText }
                 ],
-                max_tokens: triedRelax ? 8000 : 3000
+                max_tokens: triedRelax ? maxTokens * 3 : maxTokens
             };
             if (!triedStripParams) {
                 payload.temperature = 0.1;
-                // 关键：显式关闭思考模式。本任务是"题干 → 答案"的简单抽取，不需要思维链。
-                // 实测 deepseek-flash 默认就开思考：40 题时 3000 max_tokens 会被思考全部吃光、
-                // content 为空 → 答案全军覆没；关掉后同样 40 题只花 159 tokens 且全部答对。
-                payload.thinking = { type: 'disabled' };
+                // 关键：默认显式关闭思考模式（原因见上面 thinkingOn 处的实测数据）。
+                // 不显式关的话，deepseek-flash 默认就开思考，会跟答案抢 max_tokens。
+                payload.thinking = { type: thinkingOn ? 'enabled' : 'disabled' };
             }
 
             postChat(apiKey, payload, function (choice) {
