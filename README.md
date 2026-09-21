@@ -101,11 +101,12 @@
 
 Key 到 [platform.deepseek.com](https://platform.deepseek.com) 获取，**只保存在您自己的浏览器里，不会上传**。
 
-（可选）想换模型、调思考强度、开联网搜索，在控制台执行一次：
+（可选）想指定模型、开联网搜索，在控制台执行一次：
 
-	localStorage.setItem('fdty_deepseek_model', 'deepseek-v4-flash')
-	localStorage.setItem('fdty_deepseek_effort', 'low')
+	localStorage.setItem('fdty_deepseek_model', 'deepseek-flash')
 	localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
+
+不指定的话，脚本会自动读取您账号的可用模型，挑其中最快、最便宜的一个，不用管。
 
 失配题会连选项一起发给 AI，答完自动勾选，控制台会打印 `AI自动作答`。
 
