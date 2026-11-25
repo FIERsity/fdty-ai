@@ -13,206 +13,163 @@
  * 2018-12-3
  */
 
-(function () {
+(async function () {
+    'use strict';
 
-    var base_url;
-    var db_url = null;   // 题库独立源（默认与脚本同源，可通过 ?db= 或 localStorage 指定，如国内用户指向 ke.wang）
-    var stats = {total: 0, successful: 0};
-    var pendingQuestions = [];  // 题库未收录、待 DeepSeek AI 解答的题目
-
-    if (!window.fdty_src) {
-        console.error("复旦体育理论考试-自动答题机器已经更新，请至https://github.com/KevinWang15/fdty查看。");
+    if (window.fdtyRunning) {
+        console.info('正在处理这张试卷，请稍候。');
         return;
-    } else {
-        // 支持从加载地址带参数传入 Key：fdty.js?key=sk-xxx&tavily=tvly-xxx&db=https://ke.wang/fdty/database.js
-        // 用户把 Key 拼进加载代码即可，脚本自动保存到 localStorage，下次无需再配。
-        var _keyParam = window.fdty_src.match(/[?&]key=([^&]+)/);
-        if (_keyParam && _keyParam[1]) {
-            try {
-                localStorage.setItem('fdty_deepseek_key', decodeURIComponent(_keyParam[1]));
-                console.info('已从加载地址读取并保存 DeepSeek API Key，下次运行无需再配置。');
-            } catch (e) {}
-        }
-        var _tavilyParam = window.fdty_src.match(/[?&]tavily=([^&]+)/);
-        if (_tavilyParam && _tavilyParam[1]) {
-            try {
-                localStorage.setItem('fdty_tavily_key', decodeURIComponent(_tavilyParam[1]));
-            } catch (e) {}
-        }
-        var _dbParam = window.fdty_src.match(/[?&]db=([^&]+)/);
-        if (_dbParam && _dbParam[1]) {
-            try { db_url = decodeURIComponent(_dbParam[1]).split('?')[0]; } catch (e) {}
-        }
-        if (!db_url) {
-            try { db_url = localStorage.getItem('fdty_db_url'); } catch (e) {}
-        }
-        base_url = window.fdty_src.split('?')[0].replace(/fdty.js$/, '')
+    }
+    const source = new URL(document.currentScript?.src || window.fdty_src, location.href);
+    const bundledBank = new URL('database.js', source).href;
+    const customBank = source.searchParams.get('db') || getStoredKey('fdty_db_url');
+    const aiKey = getStoredKey('fdty_deepseek_key');
+    const groupSelector = ':is(#Panel1, #Panel2, #Panel3) table:is([id^="repVer_rbtn_ver_"], [id^="repSin_RadioButtonList1_"])';
+    let status;
+    let aiError = '';
+    let detectedModel;
+    let bank = new Map();
+
+    function notify(message) {
+        if (status) status.textContent = message;
+        console.info(message);
     }
 
     function stripUnimportantChars(str) {
-        return str.replace(/[ 　\t\r\n,，\.。:：“”《》？?！!~～｀`【】()_—\-＿－（）<>、\/\\"'`]/mg, "").toLowerCase();
+        return str.replace(/[ 　\t\r\n,，\.。:：“”《》？?！!~～｀`【】()_—\-＿－（）<>、\/\\"'`]/g, '').toLowerCase();
     }
 
-    function getRadioButtonElement(id, answer) {
-        return $('input', $('#repVer_rbtn_ver_' + id)).filter(function (_, item) {
-            return (+item.value == +answer);
-        })[0];
+    function normalizeAnswer(value) {
+        const text = String(value).trim().toLowerCase();
+        if (text === 'true' || text === '1') return true;
+        if (text === 'false' || text === '0') return false;
+        if (/^[a-d]$/.test(text)) return text.toUpperCase();
     }
 
-    function getRadioButtonElementForMultipleSelection(id, answer) {
-        answer = stripUnimportantChars(answer);
-        return $('input', $('#repSin_RadioButtonList1_' + id)).filter(function (_, item) {
-            return (item.value.trim().toUpperCase() == answer.trim().toUpperCase());
-        })[0];
-    }
-
-    function doWork(panelElement) {
-        //主要算法在此。
-
-        var html = panelElement.html();
-        var questions = [];
-
-        var successCount = 0;
-        var questionI = { trueOrFalse: -1, choice: -1 };
-
-        var regexp = /(\d+)\s*\n\s*\.\s*\n\s*(.+?)$[\s\S]+?table id="(.+?)"/mg;
-        var match = regexp.exec(html);
-        while (match != null) {
-            var type = match[3].indexOf('Radio')>=0?'choice':'trueOrFalse';
-            var optionsText = '';
-            if (type === 'choice') {   // 单选题：抓取选项文本，便于 AI 作答
-                optionsText = panelElement.find('#' + match[3]).find('label').map(function (_, l) { return $(l).text().trim(); }).get().join(' ');
+    function indexBank(data) {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw Error('题库格式错误');
+        const index = new Map();
+        for (const [stem, value] of Object.entries(data)) {
+            const key = stripUnimportantChars(stem);
+            const answer = normalizeAnswer(value);
+            if (key && answer !== undefined) {
+                // 规范化后同题异答，留给 AI 或用户核对。
+                index.set(key, index.has(key) && index.get(key) !== answer ? null : answer);
             }
-            questions.push({id: +match[1], text: match[2], type: type, options: optionsText});
-            match = regexp.exec(html);
         }
-        questions.forEach(function (question) {
-            var strippedText = stripUnimportantChars(question.text);
-            var answer = window.fdty_database[strippedText];
+        if (!index.size) throw Error('题库为空');
+        return index;
+    }
 
-            if (typeof answer == 'undefined') {
-                answer = tryFindSimilar(question.text);
-                if (typeof answer == 'undefined') {
-                    questionI[question.type]++;
-                    pendingQuestions.push({type: question.type, index: questionI[question.type], text: question.text + (question.options ? '\n选项：' + question.options : '')});
-                    if(question.type==='trueOrFalse'){
-                        console.log((questionI[question.type]+1) + '.%c?失配 %c'+ question.text,'color: #B700FF','color:black');
-                    }else {
-                        console.log((questionI[question.type]+1) + '.%c答案：? %c'+ question.text,'color: #B700FF','color:black');
-                    }
-                    return;
-                }
+    // 旧的独立源以 JavaScript 发布，部分不提供 CORS。把它放在独立的匿名源里读取。
+    function readScriptBank(url) {
+        return new Promise((resolve, reject) => {
+            const frame = document.createElement('iframe');
+            frame.hidden = true;
+            frame.setAttribute('sandbox', 'allow-scripts');
+            frame.referrerPolicy = 'no-referrer';
+            const timer = setTimeout(() => finish(null), 12000);
+            function finish(data) {
+                clearTimeout(timer);
+                window.removeEventListener('message', receive);
+                frame.remove();
+                if (data) resolve(data);
+                else reject(Error('题库加载失败'));
             }
-
-            successCount++;
-            // 找不到对应选项时不能直接 .click()——那会抛 TypeError 中断整个循环，
-            // 后面的题（包括 AI 兜底）全都不会处理。这里逐个判空并跳过。
-            var clickSafe = function (el, msg, color, text) {
-                if (!el) {
-                    console.warn('未找到对应选项，已跳过（题库与页面题号可能错位），请手动核对：' + text);
-                    return;
-                }
-                el.click();
-                console.log(msg, color, 'color: black');
-            };
-            if (answer === true) {
-                questionI.trueOrFalse++;
-                clickSafe(getRadioButtonElement(questionI.trueOrFalse, answer),
-                    (questionI.trueOrFalse + 1) + "." + '%c√正确 %c' + question.text, 'color: green', question.text);
-            } else if (answer === false) {
-                questionI.trueOrFalse++;
-                clickSafe(getRadioButtonElement(questionI.trueOrFalse, answer),
-                    (questionI.trueOrFalse + 1) + "." + '%c×错误 %c' + question.text, 'color: red', question.text);
-            } else {
-                questionI.choice++;
-                clickSafe(getRadioButtonElementForMultipleSelection(questionI.choice, answer),
-                    (questionI.choice + 1) + "." + '%c答案：' + answer + ' %c' + question.text, 'color: orange', question.text);
+            function receive(event) {
+                if (event.source === frame.contentWindow && event.origin === 'null') finish(event.data);
             }
+            window.addEventListener('message', receive);
+            const script = document.createElement('script');
+            script.src = url;
+            script.referrerPolicy = 'no-referrer';
+            script.setAttribute('onload', 'parent.postMessage(window.fdty_database || null, "*")');
+            script.setAttribute('onerror', 'parent.postMessage(null, "*")');
+            frame.srcdoc = '<!doctype html><meta charset="utf-8">' + script.outerHTML;
+            document.body.append(frame);
         });
-
-        stats.total += questions.length;
-        stats.successful += successCount;
     }
 
-
-    //以下为加载器。callback 可选传 onerror：加载失败时调用（用于题库等关键资源回退）
-    function loadScript(url, callback, onerror) {
-        var script = document.createElement("script");
-        script.type = "text/javascript";
-        var done = false;
-        var timeout = setTimeout(function () {
-            if (!done) { done = true; if (onerror) onerror(); }
-        }, 15000);   // 15 秒超时，避免坏 URL 永久卡住
-
-        function ok() {
-            if (done) return;
-            done = true;
-            clearTimeout(timeout);
-            if (callback) callback();
+    async function readBank(rawUrl) {
+        const url = new URL(rawUrl, location.href);
+        if (!['http:', 'https:'].includes(url.protocol)) throw Error('无效题库地址');
+        try {
+            const response = await fetch(url, {credentials: 'omit', signal: AbortSignal.timeout(8000)});
+            if (!response.ok) throw Error('题库 HTTP ' + response.status);
+            const body = (await response.text()).trim().replace(/^var\s+fdty_database\s*=\s*/, '').replace(/;$/, '');
+            return indexBank(JSON.parse(body));
+        } catch (error) {
+            if (url.origin === location.origin || !(error instanceof TypeError)) throw error;
+            return indexBank(await readScriptBank(url.href));
         }
-        function fail() {
-            if (done) return;
-            done = true;
-            clearTimeout(timeout);
-            if (onerror) onerror();
-        }
-
-        if (script.readyState) {
-            script.onreadystatechange = function () {
-                if (script.readyState == "loaded" || script.readyState == "complete") {
-                    script.onreadystatechange = null;
-                    ok();
-                }
-            };
-        } else {
-            script.onload = ok;
-            script.onerror = fail;
-        }
-
-        script.src = url;
-        document.getElementsByTagName("head")[0].appendChild(script);
     }
 
-    function tryFindSimilar(text) {
-        // 若都选择否，则返回undefined
-        var text_core_strip_parentheses = stripUnimportantChars(text.replace(/(\(.+?\)|（(.+?)）|【(.+?)】|\[(.+?)\])/mg, ""));
-        var text_core = stripUnimportantChars(text);
-        var threshold = text_core.length * 0.22;
-        for (var key in window.fdty_database) {
-            if (!window.fdty_database.hasOwnProperty(key))
-                continue;
+    function readQuestion(group) {
+        const parts = [];
+        for (let node = group.previousSibling; node; node = node.previousSibling) {
+            if (node.nodeType === Node.COMMENT_NODE) continue;
+            if (node.nodeType === 1 && node.matches('table, .fonttitle')) break;
+            parts.unshift(node.textContent);
+        }
+        const stem = parts.join(' ').trim().match(/^(\d+)\s*[.．、]\s*([\s\S]+)$/);
+        const choice = group.id.startsWith('repSin_');
+        const inputs = Array.from(group.querySelectorAll('input[type="radio"]'));
+        const labels = choice ? inputs.map(input =>
+            Array.from(input.labels || [], label => label.textContent.trim()).join(' ').trim()) : [];
+        const options = choice && labels.length >= 2 && labels.every(Boolean)
+            ? inputs.map((input, i) => input.value + '：' + labels[i]).join('\n') : '';
+        const number = stem ? stem[1] : group.id;
+        return {group, inputs, options, type: choice ? 'choice' : 'trueOrFalse',
+            text: stem ? stem[2].trim() : '', label: (choice ? '单选 ' : '判断 ') + number};
+    }
 
-            var possible = false;
+    function checked(q) {
+        return q.group.isConnected && q.group.querySelector('input[type="radio"]:checked');
+    }
 
-            //尝试Levenshtein
-            var LevenshteinDistance = new Levenshtein(text_core, key).distance;
-            if (LevenshteinDistance <= threshold)
-                possible = true;
+    function fill(q, answer, sourceName) {
+        if (checked(q) || !q.group.isConnected) return false;
+        if (q.type === 'trueOrFalse' ? typeof answer !== 'boolean' : typeof answer !== 'string') return false;
+        const input = q.inputs.find(input => q.group.contains(input) && !input.matches(':disabled') &&
+            normalizeAnswer(input.value) === answer);
+        if (!input) return false;
+        input.click();
+        if (!input.checked) return false;
+        q.applied = input;
+        q.source = sourceName;
+        return true;
+    }
 
-            //尝试包含
-            if (key.indexOf(text_core_strip_parentheses) >= 0)
-                possible = true;
-
-            if (possible) {
-                if (confirm(text + '\n' + key + '\n这两题是否一样？')) {
-                    return window.fdty_database[key];
-                }
+    function distance(a, b, limit) {
+        let prev = Array.from({length: b.length + 1}, (_, i) => i);
+        let next = Array(b.length + 1);
+        for (let i = 1; i <= a.length; i++) {
+            next[0] = i;
+            let min = i;
+            for (let j = 1; j <= b.length; j++) {
+                next[j] = Math.min(prev[j] + 1, next[j-1] + 1, prev[j-1] + Number(a[i-1] !== b[j-1]));
+                min = Math.min(min, next[j]);
             }
+            if (min > limit) return limit + 1;
+            [prev, next] = [next, prev];
         }
-        return undefined;
+        return prev[b.length];
     }
 
-
-    // ==================== DeepSeek AI 自动答题（可选功能） ====================
-    // 完全可选：不带 Key 运行就与原版一致，不触发 AI、不打扰；带 Key 才启用。
-    // 启用方式（任选其一）：
-    //   1) 把 Key 拼进加载地址：fdty.js?key=sk-xxx（推荐，自动保存，下次无需再带）
-    //   2) 控制台执行 localStorage.setItem('fdty_deepseek_key', 'sk-xxx')
-    // Key 仅保存在本机浏览器 localStorage，不会上传到任何地方。
-    // 可选配置（控制台执行一次）：
-    //   localStorage.setItem('fdty_deepseek_model', 'deepseek-flash') 指定模型（默认自动探测：取 /models 实时清单里最便宜、最快的那个）
-    //   localStorage.setItem('fdty_deepseek_thinking', 'on')          开启思考模式（默认关闭，实测对比见 askDeepSeek 内注释）
-    //   localStorage.setItem('fdty_tavily_key', 'tvly-xxx')           配置 Tavily 联网搜索（https://tavily.com 免费）
+    function similar(q, key) {
+        const core = stripUnimportantChars(q.text.replace(/\([^)]*\)|（[^）]*）|【[^】]*】|\[[^\]]*\]/g, ''));
+        const limit = Math.floor(key.length * 0.22);
+        const found = [];
+        for (const [stem, answer] of bank) {
+            if (typeof answer !== (q.type === 'choice' ? 'string' : 'boolean')) continue;
+            const delta = Math.abs(stem.length - key.length);
+            const contained = core.length >= 4 && stem.includes(core);
+            if (delta > limit && !contained) continue;
+            const diff = delta > limit ? delta : distance(key, stem, limit);
+            if (diff <= limit || contained) found.push({stem, answer, diff});
+        }
+        return found.sort((a, b) => a.diff - b.diff);
+    }
 
     var DEEPSEEK_API = 'https://api.deepseek.com/chat/completions';
     var DEEPSEEK_MODELS_URL = 'https://api.deepseek.com/models';
@@ -220,7 +177,7 @@
     // 读取本地配置的 Key。AI 答题是可选功能：没配 Key 就完全不用，不打扰用户。
     function getStoredKey(name) {
         try {
-            var v = localStorage.getItem(name);
+            var v = sessionStorage.getItem(name) || localStorage.getItem(name);
             if (v) return v;
         } catch (e) {}
         return null;
@@ -246,67 +203,54 @@
 
     function pickModel(ids) {
         var candidates = ids.filter(function (id) { return id && !MODEL_EXCLUDE.test(id); });
-        if (!candidates.length) candidates = ids.slice();
         if (!candidates.length) return null;
         candidates.sort(function (a, b) { return scoreModel(b) - scoreModel(a); });
         return candidates[0];
     }
 
-    function clearModelCache() {
-        try {
-            localStorage.removeItem('fdty_detected_model');
-            localStorage.removeItem('fdty_detected_model_key');
-            localStorage.removeItem('fdty_detected_model_time');
-        } catch (e) {}
-    }
+    async function detectDeepSeekModel(apiKey, callback, refresh = false) {
+        const configured = getStoredKey('fdty_deepseek_model');
+        if (configured || detectedModel) { callback(configured || detectedModel); return; }
 
-    var MODEL_CACHE_TTL = 24 * 60 * 60 * 1000;   // 模型清单会变，缓存最多用 24 小时
-
-    // forceRefresh=true：忽略缓存重新探测（模型调用报 not found 时用）
-    function detectDeepSeekModel(apiKey, callback, forceRefresh) {
+        // 只缓存模型名、时间和密钥指纹。旧 HTTP 页面可能没有 SubtleCrypto。
+        let fingerprint, cached;
         try {
-            var configured = localStorage.getItem('fdty_deepseek_model');
-            if (configured) { callback(configured); return; }
+            const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(apiKey));
+            fingerprint = Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2, '0')).join('');
+            const entry = JSON.parse(sessionStorage.getItem('fdty_model_cache'));
+            if (!refresh && entry?.fingerprint === fingerprint) cached = entry;
         } catch (e) {}
-        // 缓存同时绑定 key 与时间：换 key、或缓存过期，都会重新探测
-        if (!forceRefresh) {
+        if (cached && Date.now() - cached.time < 86400000) {
+            detectedModel = cached.model;
+        } else {
             try {
-                if (localStorage.getItem('fdty_detected_model_key') === apiKey) {
-                    var cached = localStorage.getItem('fdty_detected_model');
-                    var ts = parseInt(localStorage.getItem('fdty_detected_model_time') || '0', 10);
-                    if (cached && (+new Date() - ts) < MODEL_CACHE_TTL) { callback(cached); return; }
+                const response = await fetch(DEEPSEEK_MODELS_URL, {
+                    headers: {Authorization: 'Bearer ' + apiKey},
+                    signal: AbortSignal.timeout(12000)
+                });
+                if (!response.ok) throw Error('模型列表 HTTP ' + response.status);
+                const {data} = await response.json();
+                detectedModel = pickModel(data.map(model => model.id));
+                if (!detectedModel) throw Error('可用模型列表为空');
+                if (fingerprint) {
+                    const entry = {fingerprint, model: detectedModel, time: Date.now()};
+                    try { sessionStorage.setItem('fdty_model_cache', JSON.stringify(entry)); } catch (e) {}
                 }
-            } catch (e) {}
+            } catch (error) {
+                detectedModel = cached?.model;
+                if (!detectedModel) aiError = error.message;
+                console.warn('读取 DeepSeek 模型失败：' + error.message);
+            }
         }
-        fetch(DEEPSEEK_MODELS_URL, {
-            headers: { 'Authorization': 'Bearer ' + apiKey }
-        }).then(function (res) { return res.json(); }).then(function (data) {
-            var ids = ((data && data.data) || []).map(function (m) { return m && m.id; }).filter(function (x) { return !!x; });
-            var chosen = pickModel(ids);
-            if (!chosen) throw new Error('模型列表为空');
-            try {
-                localStorage.setItem('fdty_detected_model', chosen);
-                localStorage.setItem('fdty_detected_model_key', apiKey);
-                localStorage.setItem('fdty_detected_model_time', String(+new Date()));
-            } catch (e) {}
-            callback(chosen);
-        }).catch(function () {
-            // 探测失败（网络抖动等）：同 key 的旧缓存即使过期也先拿来用——总比没有强。
-            // 若这个模型其实已下架，调用时会报错，届时再清缓存重探（见 askDeepSeek）。
-            try {
-                var c = localStorage.getItem('fdty_detected_model');
-                if (c && localStorage.getItem('fdty_detected_model_key') === apiKey) { callback(c); return; }
-            } catch (e) {}
-            callback(null);   // 拿不到就不猜名字——猜错只会更难排查
-        });
+        callback(detectedModel);
     }
 
     // 可选：联网搜索（Tavily），把结果作为参考资料喂给 AI
     function searchWeb(query, callback) {
-        var tavilyKey = null;
-        try { tavilyKey = localStorage.getItem('fdty_tavily_key'); } catch (e) {}
+        var tavilyKey = getStoredKey('fdty_tavily_key');
         if (!tavilyKey) { callback(''); return; }
         fetch('https://api.tavily.com/search', {
+            signal: AbortSignal.timeout(8000),
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ api_key: tavilyKey, query: query, max_results: 3, search_depth: 'basic' })
@@ -316,55 +260,26 @@
         }).catch(function () { callback(''); });
     }
 
-    // 解析 AI 返回的答案文本 -> [{index, answer}]（index 为 0-based 题目序号）
-    // 匹配“序号.答案”，容忍答案后附加的标点/收尾词（如 “A。” “对 ” “D 完成”），
-    // 也兼容挤在一行、带前缀等情况。
-    function parseDeepSeekAnswers(content, questionCount) {
-        var results = [];
-        var text = String(content || '');
-        // 先把“序号.答案”拆成行（在数字+分隔符前插换行），兼容挤在一行的情况
-        var re = /(\d+)\s*[.、:：)\]](?=\s*[正确错误对错ABCD])/g;
-        text = text.replace(re, '\n$&');
-        var lines = text.split(/\r?\n/);
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim();
-            if (!line) continue;
-            // 必须以“序号+分隔符”开头（排除纯解释文字），然后提取答案 token
-            var m = line.match(/^(\d+)\s*[.、:：)\]](.*)$/i);
-            if (!m) continue;
-            var idx = parseInt(m[1], 10);
-            if (idx < 1 || idx > questionCount) continue;
-            var rest = m[2].trim();
-            // 容忍 “1.选A”“1.应选B” 这类写法：剥掉开头的引导词（仅当后面紧跟答案时才剥，"选"本身不是答案）
-            rest = rest.replace(/^(?:应该选|应选|选)\s*(?=[正确错误对错ABCD])/i, '');
-            // 在剩余内容里找第一个答案 token：对/错/正确/错误/A-D（A-D 要求是独立字母，
-            // 后面不能跟大写字母，避免匹配到 Computer/Answer 等英文单词里的字母）
-            var am = rest.match(/(正确|错误|对|错|([ABCD])(?![A-Z]))/i);
-            if (!am) continue;
-            // 排除常见干扰：
-            // 1) 答案 token 前紧跟解释性文字（中英文）→ 可能是解释而非答案
-            var before = rest.slice(0, am.index);
-            if (/正确|错误|答案|是|选|项|为|\b(?:correct|answer|is|choose|option)\b/i.test(before)) continue;
-            // 2) 若答案是“对/错/正确/错误”这类判断题答案，但后面还跟着选项字母（如“正确答案是A”“选B”），
-            //    说明它在解释而非作答，跳过避免误判。
-            if (/^(正确|错误|对|错)$/i.test(am[1])) {
-                var after = rest.slice(am.index + am[1].length);
-                if (/[ABCD]/i.test(after)) continue;
-            }
-            var raw = am[1].toUpperCase();
-            var answer;
-            if (raw === '对' || raw === '正确') answer = true;
-            else if (raw === '错' || raw === '错误') answer = false;
-            else if ('ABCD'.indexOf(raw) >= 0) answer = raw;
-            else continue;
-            results.push({ index: idx - 1, answer: answer });
+    function parseDeepSeekAnswers(content, count) {
+        const byIndex = new Map();
+        const lines = String(content).replace(/(\d+\s*[.、:：)\]])/g, '\n$1').split('\n');
+        for (const line of lines) {
+            const item = line.trim().match(/^(\d+)\s*[.、:：)\]]\s*(?:应该选|应选|选)?\s*(正确|错误|对|错|[A-D])\s*[。.]?$/i);
+            if (!item) continue;
+            const index = Number(item[1]) - 1;
+            if (index < 0 || index >= count) continue;
+            const token = item[2].toUpperCase();
+            const answer = /^[A-D]$/.test(token) ? token : ['正确', '对'].includes(token);
+            // 重复且矛盾的答案进入补问，不能由输出顺序决定。
+            byIndex.set(index, byIndex.has(index) && byIndex.get(index) !== answer ? null : answer);
         }
-        return results;
+        return Array.from(byIndex, ([index, answer]) => ({index, answer})).filter(item => item.answer !== null);
     }
 
     // 发送一次对话请求。HTTP 错误也把 API 的 message 带出来，便于判断该走哪种自愈重试。
     function postChat(apiKey, payload, onSuccess, onError) {
         fetch(DEEPSEEK_API, {
+            signal: AbortSignal.timeout(60000),
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -375,7 +290,7 @@
             if (r.ok) return r.json();
             return r.json().catch(function () { return {}; }).then(function (body) {
                 var msg = (body && body.error && body.error.message) || ('HTTP ' + r.status);
-                var err = new Error(r.status === 401 ? 'API Key 无效或已过期' : msg);
+                var err = new Error(r.status === 401 ? 'API Key 无效或已过期' : String(msg).replaceAll(apiKey, '[Key]'));
                 err.status = r.status;
                 throw err;
             });
@@ -385,15 +300,17 @@
     }
 
     function askDeepSeek(questions, callback) {
-        var apiKey = getStoredKey('fdty_deepseek_key');
-        if (!apiKey) { callback([]); return; }   // 未配置 Key：完全静默跳过，AI 答题为可选功能
+        var apiKey = aiKey;
+        if (!apiKey) { callback(null); return; }   // 未配置 Key：完全静默跳过，AI 答题为可选功能
 
         var lines = questions.map(function (q, i) {
-            return (i + 1) + '.[' + (q.type === 'trueOrFalse' ? '判断题' : '单选题') + ']' + q.text;
+            return (i + 1) + '.[' + (q.type === 'trueOrFalse' ? '判断题' : '单选题') + ']' + q.text +
+                (q.options ? '\n当前选项：\n' + q.options : '') +
+                (q.hints ? '\n相似题参考（原题及旧答案）：' + q.hints : '');
         });
         var basePrompt = '你是复旦体育理论考试答题助手。请根据体育知识回答以下题目。\n' +
             '输出要求：每题一行，格式为“序号.答案”。判断题答案只写“对”或“错”；单选题答案只写选项字母 A/B/C/D。\n' +
-            '禁止输出任何解释或思考过程。\n';
+            '按当前题干及选项独立判断，留意否定、数字和顺序变化。相似题的旧答案仅供参考。无法判断可写 ?。只输出答案。\n';
 
         var triedModelRetry = false, triedRelax = false, triedStripParams = false;
         // 是否开启思考模式，默认关闭。为什么默认关——以题库答案为基准，40 题 × 各 6 轮实测：
@@ -449,15 +366,19 @@
             }, function (err) {
                 var m = String((err && err.message) || '');
                 // 模型名失效（下架/改名）：清掉缓存重新探测，用新模型重试一次
-                if (!triedModelRetry && err.status === 400 && /model/i.test(m)) {
+                if (!triedModelRetry && [400, 404].includes(err.status) && /model/i.test(m)) {
                     triedModelRetry = true;
+                    detectedModel = null;
                     // 手动指定的模型名（fdty_deepseek_model）也可能已下架：一并清掉，
                     // 否则重新探测会直接命中这个覆盖值、又拿回同一个坏名字。
                     try { localStorage.removeItem('fdty_deepseek_model'); } catch (e) {}
                     console.warn('当前模型不可用（' + m + '），正在重新探测模型…');
-                    clearModelCache();
+                    try {
+                        sessionStorage.removeItem('fdty_deepseek_model');
+                        sessionStorage.removeItem('fdty_model_cache');
+                    } catch (e) {}
                     detectDeepSeekModel(apiKey, function (newModel) {
-                        if (!newModel) { console.error('DeepSeek 调用失败：无法获取可用模型'); callback([]); return; }
+                        if (!newModel) { console.error('DeepSeek 调用失败：无法获取可用模型'); callback(null); return; }
                         console.info('已切换到模型：' + newModel);
                         run(newModel, refText);
                     }, true);
@@ -470,21 +391,22 @@
                     run(model, refText);
                     return;
                 }
+                aiError = m;
                 console.error('DeepSeek 调用失败：' + m);
-                callback([]);
+                callback(null);
             });
         };
 
         detectDeepSeekModel(apiKey, function (model) {
             if (!model) {
-                console.error('DeepSeek 调用失败：未能获取可用模型列表（请检查网络后重试）。');
-                callback([]);
+                aiError = aiError || '未能取得可用模型';
+                console.error('DeepSeek 调用失败：' + aiError);
+                callback(null);
                 return;
             }
             console.info('使用模型：' + model);
             // 若配置了 Tavily，先并发搜索（最多 5 题，避免过慢）
-            var tavilyKey = null;
-            try { tavilyKey = localStorage.getItem('fdty_tavily_key'); } catch (e) {}
+            var tavilyKey = getStoredKey('fdty_tavily_key');
             if (tavilyKey && questions.length <= 5) {
                 var promises = questions.map(function (q) {
                     return new Promise(function (resolve) { searchWeb(q.text, resolve); });
@@ -498,110 +420,119 @@
         });
     }
 
-    // 把 AI 答案填到页面上
-    function applyDeepSeekAnswers(answers, questions) {
-        var applied = 0;
-        answers.forEach(function (a) {
-            var q = questions[a.index];
-            if (!q) return;
-            var el = null;
-            // 按题型校验答案类型，防止 AI 类型错配（如把判断题答成字母、单选答成对/错）导致异常
-            if (q.type === 'trueOrFalse') {
-                if (a.answer !== true && a.answer !== false) return;
-                el = getRadioButtonElement(q.index, a.answer);
-            } else {
-                if (typeof a.answer !== 'string' || !/^[ABCD]$/i.test(a.answer)) return;
-                el = getRadioButtonElementForMultipleSelection(q.index, a.answer);
+    function prepare(q) {
+        if (checked(q) || !q.text || !q.inputs.some(input => !input.matches(':disabled'))) return false;
+        const key = stripUnimportantChars(q.text);
+        if (!key || fill(q, bank.get(key), '题库')) return false;
+        const candidates = similar(q, key);
+        if (aiKey) {
+            if (q.type === 'choice' && !q.options) return false;
+            q.hints = candidates.slice(0, 3).map(c => c.stem + ' → ' + c.answer).join('\n');
+            return true;
+        }
+        for (const candidate of candidates) {
+            if (confirm(q.text + '\n' + candidate.stem + '\n这两题是否一样？')) {
+                fill(q, candidate.answer, '题库');
+                break;
             }
-            if (el) {
-                el.click();
-                applied++;
-                console.log('%cAI自动作答：' + (q.type === 'trueOrFalse' ? (a.answer === true ? '√' : '×') : a.answer) + ' %c' + q.text.split('\n')[0], 'color: #6A5ACD', 'color: black');
-            }
-        });
-        return applied;
+        }
+        return false;
     }
 
-    function solveWithDeepSeek(questions) {
+    async function resolvePending(questions) {
+        let remaining = questions;
+        for (let round = 0; round < 2 && remaining.length; round++) {
+            notify('DeepSeek 正在' + (round ? '补答' : '处理') + remaining.length + '题…');
+            const answers = await new Promise(resolve => askDeepSeek(remaining, resolve));
+            if (!answers) break;
+            for (const {index, answer} of answers) {
+                const q = remaining[index];
+                const current = readQuestion(q.group);
+                if (current.text === q.text && current.options === q.options) fill(q, answer, 'AI');
+            }
+            remaining = remaining.filter(q => {
+                if (!q.group.isConnected || checked(q)) return false;
+                const current = readQuestion(q.group);
+                return current.text === q.text && current.options === q.options;
+            });
+        }
+    }
+
+    function showAiReview(questions) {
         if (!questions.length) return;
-        // 未配置 Key：完全静默返回，不打印任何 AI 相关日志（与原始脚本行为一致，不打扰）
-        if (!getStoredKey('fdty_deepseek_key')) return;
-        console.info('题库未收录 ' + questions.length + ' 题，正在调用 DeepSeek AI 解答…');
-        askDeepSeek(questions, function (answers) {
-            if (!answers.length) {
-                console.warn('DeepSeek 未能给出答案（调用失败），请手动作答这几题。');
-                return;
-            }
-            var applied = applyDeepSeekAnswers(answers, questions);
-            console.info('DeepSeek AI 已自动作答 ' + applied + '/' + questions.length + ' 题，请核对！');
-        });
+        const details = document.createElement('details');
+        details.id = 'fdty-ai-review';
+        const summary = document.createElement('summary');
+        summary.textContent = '核对 AI 填写的 ' + questions.length + ' 题';
+        const list = document.createElement('ul');
+        for (const q of questions) {
+            const item = document.createElement('li');
+            const link = document.createElement('a');
+            link.href = '#' + q.group.id;
+            const value = normalizeAnswer(q.applied.value);
+            const answer = typeof value === 'boolean' ? (value ? '对' : '错') : value;
+            link.textContent = q.label + ' · ' + answer + ' · ' + q.text;
+            item.append(link);
+            list.append(item);
+        }
+        details.append(summary, list);
+        status.after(details);
     }
 
+    async function run() {
+        let groups;
+        for (let i = 0; i < 50; i++) {
+            groups = document.querySelectorAll(groupSelector);
+            if (groups.length) break;
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!groups.length) throw Error('未找到判断题或单选题，请在显示试题的 paper 框架中运行。');
+        status = document.getElementById('fdty-status') || document.createElement('p');
+        document.getElementById('fdty-ai-review')?.remove();
+        status.id = 'fdty-status';
+        status.setAttribute('role', 'status');
+        groups[0].closest('[id^="Panel"]').before(status);
+        notify('正在读取题库…');
+        for (const url of new Set([customBank, bundledBank].filter(Boolean))) {
+            try {
+                bank = await readBank(url);
+                const origin = new URL(url, location.href).origin;
+                console.info((url === bundledBank ? '随脚本题库' : '自定义题库') + '已载入：' + bank.size + ' 条（' + origin + '）');
+                break;
+            } catch (error) {
+                console.warn('题库读取失败：' + error.message);
+            }
+        }
+        if (!bank.size) console.warn('题库不可用。已启用 AI 时将直接按页面题目作答。');
+        const questions = Array.from(document.querySelectorAll(groupSelector), readQuestion);
+        const pending = questions.filter(prepare);
+        await resolvePending(pending);
+        const counts = {题库: 0, AI: 0, 已选: 0};
+        const missing = [];
+        const aiQuestions = [];
+        for (const q of questions) {
+            const input = checked(q);
+            if (!input) {
+                missing.push(q.label);
+                continue;
+            }
+            const source = input === q.applied ? q.source : '已选';
+            counts[source]++;
+            if (source === 'AI') aiQuestions.push(q);
+        }
+        showAiReview(aiQuestions);
+        notify('程序完成。共 ' + questions.length + ' 题，题库填写 ' + counts.题库 +
+            '，AI 填写 ' + counts.AI + '，保留已选 ' + counts.已选 + '，待处理 ' + missing.length +
+            (missing.length ? '（' + missing.join('、') + '）' : '') + (aiError ? '。DeepSeek：' + aiError : '') + '。请核对后手动交卷。');
+    }
 
-    loadScript(base_url + "lib/jquery.min.js", function () {
-        loadScript(base_url + "lib/levenshtein.js", function () {
-            var IntervalId = 0;
-            console.info('请在考试界面中运行本程序哦！\n点击“开始考试”，能看到题目，计时器开始走，然后将Chrome开发者工具的“top”下拉菜单调整到paper(stexampaperV1.aspx)后。');
-            console.info('正在寻找页面中的题目…');
-            IntervalId = setInterval(function () {
-                var panelElement = window.jQuery('#Panel3');
-                if (!!panelElement && !!panelElement.html()) {
-                    clearInterval(IntervalId);
-                    IntervalId = -9999;
-                    console.info('成功找到题目！');
-                    console.info('正在下载题库，请稍后（比较大，要下载一会儿）');
-
-                    // 组装题库 URL：db_url 已带 query 则用 & 追加时间戳，否则用 ?
-                    var dbUrl = db_url || (base_url + 'database.js');
-                    dbUrl += (dbUrl.indexOf('?') >= 0 ? '&' : '?') + (+new Date());
-                    // 题库加载失败（网络错误，或"加载成功"但没产出 fdty_database——比如 CDN 返回了 HTML 错误页）。
-                    // 若是自定义源导致的，清掉它并回退到同源题库重试一次。
-                    var onDbFail = function () {
-                        if (db_url) {
-                            console.error('自定义题库源加载失败（' + db_url + '），已回退到默认题库源：' + base_url + 'database.js');
-                            try { localStorage.removeItem('fdty_db_url'); } catch (e) {}
-                            db_url = null;
-                            loadDb(base_url + 'database.js?' + (+new Date()));
-                        } else {
-                            console.error('题库下载失败，请检查网络后刷新页面重试。');
-                        }
-                    };
-
-                    var loadDb = function (url) {
-                        loadScript(url, function () {
-                            // 必须校验题库真的存在：脚本"加载成功"不等于内容正确，
-                            // 否则下面 Object.keys 会直接抛错、整个流程无声中断。
-                            if (!window.fdty_database || typeof window.fdty_database !== 'object') {
-                                onDbFail();
-                                return;
-                            }
-                            console.info('题库下载成功！总共' + Object.keys(window.fdty_database).length + "条记录");
-
-                            for (var i = 3; i > 0; i--) {
-                                var panel = window.jQuery('#Panel' + i);
-                                if (panel.length)
-                                    doWork(panel);
-                            }
-
-                            console.info('总共' + stats.total + "题，匹配成功" + stats.successful + "题。\n　");
-
-                            if (pendingQuestions.length > 0) {
-                                solveWithDeepSeek(pendingQuestions);
-                            }
-
-                            console.warn('程序完成，请【仔细核对】！\n请过几分钟，等计时器走到一个正常数字了，再交卷！');
-                            console.log('%c反馈问题: https://github.com/KevinWang15/fdty/issues', 'color: #AAA;');
-                        }, onDbFail);
-                    };
-                    loadDb(dbUrl);
-                }
-            }, 100);
-
-            setTimeout(function () {
-                if (IntervalId != -9999) {
-                    console.warn('仍然没有找到题目，您确定已经点了开始考试、在考试界面中，而且Chrome开发者工具的“top”下拉菜单调整到了paper(stexampaperV1.aspx)中了？\n如果您是忘记调整到paper(stexampaperV1.aspx)中了，请调整后重新运行代码（无需刷新页面）。');
-                }
-            }, 3000);
-        });
-    });
+    window.fdtyRunning = true;
+    try {
+        try { localStorage.removeItem('fdty_detected_model_key'); } catch (e) {}
+        await run();
+    } catch (error) {
+        notify('处理未完成：' + error.message);
+    } finally {
+        delete window.fdtyRunning;
+    }
 })();

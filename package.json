@@ -1,0 +1,10 @@
+{
+  "name": "fdty-ai",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

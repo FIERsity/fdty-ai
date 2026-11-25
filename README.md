@@ -5,11 +5,11 @@
 
 * 基于开源项目 [KevinWang15/fdty](https://github.com/KevinWang15/fdty)，感谢原作者多年的维护与贡献！
 * 题库精确匹配（6501 题）+ DeepSeek AI 兜底，双重保障。
-* 完全可选：不带 Key 运行就和原版一模一样，不弹窗、不打扰；带 Key 才启用 AI 答题。
+* AI 可选：配置 DeepSeek API Key 后启用；未配置时使用题库。
 * 方便易用，基于Chrome，兼容所有操作系统，无需安装任何软件。
 * 自动读取网页、匹配题库，瞬间出答案、自动勾选，节省时间。
 * 支持是非题与单选题。
-* 智能容错，若发现题目是数据库中某题修改了几个字，会提醒用户判断。
+* 题干有改动时，启用 AI 会参考相似题和当前选项作答；只用题库时仍会请你确认相似题。
 
 > 本项目仅限技术交流，完全开源，无任何盈利行为。也请同学们重视体育理论考试，好好准备体育理论考试。
 
@@ -17,18 +17,10 @@
 ![show](screenshots/show.png?2017-5-22)
 不光自动匹配，还会帮您自动勾选上！
 
-所以，按照下面的【使用方法】做一遍，然后点交卷，基本就能满分了。
-
-一分钟搞定体育理论考试。
-
 ## 使用方法
 
 ### 1. 使用 **Chrome** 打开考试界面
-要打开【考试界面】哦！就是做题界面，点“开始考试”按钮后，能看到50道题目的那个界面。
-
-随便玩，点“开始考试”没有后果的，考到一半不想交了，关闭窗口即可（2016年5月26日亲测）。
-
-一定要较新版本的Chrome！别的浏览器没试过，尽量不要用！
+以下步骤适用于能在开发者工具中看到 `paper (stexampaperV1.aspx)` 的旧版试题页。已在仓库的两张样卷上验证；[本学期通知](https://fdty.fudan.edu.cn/38/6f/c29222a800879/page.htm)所列的超星页面尚未验证。
 
 ### 2. 在考试界面中，打开开发者工具里的控制台
 确保考试界面是激活状态的（不是灰的），然后在该界面按：
@@ -48,23 +40,11 @@
 
 	var fdty_src="https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js?db=https://ke.wang/fdty/database.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + (fdty_src.indexOf('?') >= 0 ? '&' : '?') + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
-想让 AI 答题库外的新题？把 Deepseek的APIKey 拼进加载地址（`?key=`）即可，一次粘贴搞定：
+首次启用 AI 可直接使用下方「AI 自动答题」中的代码。
 
-	var fdty_src="https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js?key=sk-你的KEY&db=https://ke.wang/fdty/database.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + (fdty_src.indexOf('?') >= 0 ? '&' : '?') + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
-
-
-### 5. 检查试卷、补充数据库中没有的题目的答案、交卷
+### 5. 检查试卷、补充未填写的题目、交卷
 ![show](screenshots/3.png?2017-5-22)
-只要数据库中有答案的，本程序会帮您自动勾选，但您还是要检查一下试卷哦！
-
-数据库中没答案的，就不会自动勾选，您需要百度一下，然后手动勾选。
-
-### 关于刷新/关闭页面重开
-体育理论考的界面是可以刷新的，在提交之前，也可以关闭然后重新开，不会消耗提交的次数（2016年5月26日 亲测）
-
-体育理论考界面有代码防止学生刷新，所以按<kbd>F5</kbd>是没用的。但这个很容易绕过，在Chrome开发者工具中，按<kbd>Ctrl</kbd>+<kbd>R</kbd>刷新就行。
-
-所以，如果哪次打开，发现有好几题没有匹配成功的，不妨刷新了重新匹配试试。刷新后，要回到第三步，重新做哦。
+等题目上方显示“程序完成”后，检查待处理题号。可以展开 AI 填写清单，点击题目核对选项，再手动交卷。脚本会保留你已选的答案，包括等待 AI 时手动选择的答案。
 
 # PR请求
 
@@ -94,21 +74,30 @@
 
 题库里没有的题，可以让 AI 帮您答。
 
-复制以下代码，粘贴、运行
-![show](screenshots/2.png?2017-5-22)
+首次运行时，在提示框输入自己的 [DeepSeek API Key](https://platform.deepseek.com)。取消后继续使用题库。新配置保存在当前标签页的会话存储中，已有的本地配置也可使用。
 
-	var fdty_src="https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js?key=sk-你的KEY&db=https://ke.wang/fdty/database.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本（已启用 AI 答题）');f_sl.src = fdty_src + (fdty_src.indexOf('?') >= 0 ? '&' : '?') + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
+```js
+(() => {
+    if (!sessionStorage.getItem('fdty_deepseek_key') && !localStorage.getItem('fdty_deepseek_key')) {
+        const key = prompt('DeepSeek API Key（取消则只使用题库）');
+        if (key?.trim()) sessionStorage.setItem('fdty_deepseek_key', key.trim());
+    }
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/gh/FIERsity/fdty-ai@master/fdty.js?db=https://ke.wang/fdty/database.js';
+    document.head.append(script);
+})();
+```
 
-Key 到 [platform.deepseek.com](https://platform.deepseek.com) 获取，**只保存在您自己的浏览器里，不会上传**。
+Key 仅用于向对应 API 鉴权。用过旧版 `?key=` 加载方式的用户，建议更换该 Key，因为脚本请求会将 URL 参数一并发送给 CDN。
 
 （可选）想指定模型、开联网搜索，在控制台执行一次：
 
 	localStorage.setItem('fdty_deepseek_model', 'deepseek-flash')
 	localStorage.setItem('fdty_tavily_key', 'tvly-你的key')
 
-不指定的话，脚本会自动读取您账号的可用模型，挑其中最快、最便宜的一个，不用管。
+不指定的话，脚本会自动读取您账号的可用模型，优先选择 Flash 等轻量模型。
 
-失配题会连选项一起发给 AI，答完自动勾选，控制台会打印 `AI自动作答`。
+启用 AI 时，待答题的题干、当前选项和相似题参考会发给 DeepSeek；另外配置 Tavily 后，待答题不超过 5 题时也会向 Tavily 搜索题干。
 
 ## 备用加载方案（gh-proxy）
 
@@ -116,4 +105,4 @@ Key 到 [platform.deepseek.com](https://platform.deepseek.com) 获取，**只保
 
 	var fdty_src="https://gh-proxy.com/https://raw.githubusercontent.com/FIERsity/fdty-ai/master/fdty.js?db=https://ke.wang/fdty/database.js";var f_sl = document.createElement("script");f_sl.type = "text/javascript";console.info('正在加载自动答题脚本');f_sl.src = fdty_src + (fdty_src.indexOf('?') >= 0 ? '&' : '?') + (+new Date());document.getElementsByTagName("head")[0].appendChild(f_sl);
 
-⚠️ 此代理为第三方服务，**请勿把 DeepSeek API Key 拼进此地址**（Key 会经过第三方，无法保证安全）。如果你之前用主方案配置过 API Key（Key 已保存在浏览器里），此兜底方案也能正常使用 AI 答题；只有首次配置 Key 时才需要先走一次主方案。
+此代理为第三方脚本来源，请使用你信任的服务。Key 的配置方式与主方案相同，请勿将 Key 拼入加载地址。
